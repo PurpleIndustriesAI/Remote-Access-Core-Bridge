@@ -69,5 +69,5 @@ def routes(ctx):
     names = {'pair_code': 'pair-code', 'pair_cancel': 'pair-cancel'}
     return [AppRoute('GET', '/rac/status', operation('status'))] + [
         AppRoute('POST', '/rac/' + names.get(c, c), operation(c))
-        for c in ('pair_code', 'pair_cancel', 'pair', 'send', 'set', 'unpair', 'ping')
+        for c in ('pair_code', 'pair_cancel', 'pair', 'send', 'set', 'unpair', 'ping', 'wifi', 'probe', 'speedtest')
     ]

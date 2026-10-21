@@ -60,6 +60,30 @@ rac sync on|off [--peer PEER]
 rac unpair PEER
 ```
 
+## Network helper
+
+Streaming quality depends on the network more than anything else. The **Network** panel
+(and the CLI) shows:
+
+- **Live Wi-Fi:** signal, band, channel, standard, and link rate, refreshed every second
+  with the **Live signal finder** on. A trend arrow and "best so far" help you find the
+  strongest spot for a laptop or router.
+- **Your network on each band:** every access point broadcasting your network, with signal
+  and how busy its channel is, so you can see when 5 GHz is the better choice.
+- **Advice:** plain fixes from the real readings (switch to 5 GHz, weak signal, busy
+  channel, slow link, older Wi-Fi standard, use a cable).
+- **Speed test:** two-way throughput, latency, and jitter to a paired device over the same
+  encrypted link, with a suggested Moonlight video bitrate.
+
+```
+rac net              # readings and advice (works without the bridge)
+rac net --watch      # live signal finder in the terminal
+rac probe PEER       # latency and jitter
+rac speedtest PEER   # throughput and suggested Moonlight bitrate
+```
+
+Readings come from `netsh` on Windows and `nmcli` on Linux. Nothing leaves the machine.
+
 ## Crew app
 
 `crew-app/` is the Crew app (Control Room UI). The installers register it when Crew is

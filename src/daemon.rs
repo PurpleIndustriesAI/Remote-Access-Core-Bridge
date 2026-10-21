@@ -283,6 +283,39 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
     match msg {
         Msg::Ping => Ok(()),
         Msg::Pair { .. } => unreachable!(),
+        Msg::Echo { n } => {
+            if n > proto::MAX_ECHO {
+                bail!("too many probes");
+            }
+            let mut f = [0u8; 8];
+            for _ in 0..n {
+                tokio::time::timeout(IO_TIMEOUT, s.read_exact(&mut f)).await??;
+                s.write_all(&f).await?;
+                s.flush().await?;
+            }
+            Ok(())
+        }
+        Msg::Bench { up, down } => {
+            if up > proto::MAX_BENCH || down > proto::MAX_BENCH {
+                bail!("test size too large");
+            }
+            let mut buf = vec![0u8; COPY_BUF];
+            let mut left = up;
+            while left > 0 {
+                let n = (left as usize).min(buf.len());
+                tokio::time::timeout(IO_TIMEOUT, s.read_exact(&mut buf[..n])).await??;
+                left -= n as u64;
+            }
+            buf.fill(0x5a);
+            let mut left = down;
+            while left > 0 {
+                let n = (left as usize).min(buf.len());
+                s.write_all(&buf[..n]).await?;
+                left -= n as u64;
+            }
+            s.flush().await?;
+            Ok(())
+        }
         Msg::Text { len } => {
             if len > settings.max_text_bytes {
                 bail!("text is larger than the receiver's limit");
@@ -646,6 +679,85 @@ async fn ping(node: &Node, fp: &str) -> Result<()> {
     deliver(node, &peer, &Outgoing { msg: Msg::Ping, body: Body::None, bytes: 0 }).await
 }
 
+/// Round-trip times over one connection: min/avg/max/jitter in milliseconds.
+async fn probe(node: &Node, fp: &str, n: u32) -> Result<Value> {
+    let peer = node.peer(fp).context("unknown peer")?;
+    let n = n.clamp(5, proto::MAX_ECHO);
+    let (mut t, addr) = connect(node, &peer).await?;
+    proto::write_json(&mut t, &Msg::Echo { n }).await?;
+    let mut rtts = Vec::with_capacity(n as usize);
+    let mut f = [0u8; 8];
+    for i in 0..n {
+        let start = Instant::now();
+        t.write_all(&(i as u64).to_be_bytes()).await?;
+        t.flush().await?;
+        tokio::time::timeout(Duration::from_secs(5), t.read_exact(&mut f)).await.context("the peer stopped answering")??;
+        rtts.push(start.elapsed().as_secs_f64() * 1000.0);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let reply: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut t)).await??;
+    t.shutdown().await.ok();
+    if !reply.ok {
+        bail!("{}", reply.error.unwrap_or_default());
+    }
+    let avg = rtts.iter().sum::<f64>() / rtts.len() as f64;
+    let jitter = rtts.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>() / (rtts.len() - 1).max(1) as f64;
+    let max = rtts.iter().cloned().fold(0.0, f64::max);
+    let min = rtts.iter().cloned().fold(f64::MAX, f64::min);
+    // TCP hides raw loss; frames 4x slower than the median show retransmissions.
+    let mut sorted = rtts.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = sorted[sorted.len() / 2];
+    let spikes = rtts.iter().filter(|r| **r > (median * 4.0).max(median + 20.0)).count();
+    Ok(json!({"peer": peer.name, "via": addr, "samples": n, "min_ms": min, "avg_ms": avg, "max_ms": max, "jitter_ms": jitter,
+              "spike_pct": spikes as f64 * 100.0 / n as f64, "rtts_ms": rtts}))
+}
+
+/// Two-way throughput over the encrypted link, plus a Moonlight bitrate suggestion.
+async fn speedtest(node: &Node, fp: &str, mib: u64) -> Result<Value> {
+    let peer = node.peer(fp).context("unknown peer")?;
+    let bytes = mib.clamp(4, 128) * 1024 * 1024;
+    let (mut t, addr) = connect(node, &peer).await?;
+    proto::write_json(&mut t, &Msg::Bench { up: bytes, down: bytes }).await?;
+    let buf = vec![0xa5u8; COPY_BUF];
+    let start = Instant::now();
+    let mut left = bytes;
+    while left > 0 {
+        let n = (left as usize).min(buf.len());
+        t.write_all(&buf[..n]).await?;
+        left -= n as u64;
+    }
+    t.flush().await?;
+    let mut rbuf = vec![0u8; COPY_BUF];
+    // Upload ends when the first download byte arrives (one round trip of overhead).
+    let first = tokio::time::timeout(Duration::from_secs(120), t.read(&mut rbuf)).await.context("the peer stopped answering")??;
+    let up_s = start.elapsed().as_secs_f64();
+    let down_start = Instant::now();
+    let mut got = first as u64;
+    while got < bytes {
+        let n = tokio::time::timeout(IO_TIMEOUT, t.read(&mut rbuf[..((bytes - got) as usize).min(COPY_BUF)])).await??;
+        if n == 0 {
+            bail!("the connection closed during the test");
+        }
+        got += n as u64;
+    }
+    let down_s = down_start.elapsed().as_secs_f64().max(0.001);
+    let reply: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut t)).await??;
+    t.shutdown().await.ok();
+    if !reply.ok {
+        bail!("{}", reply.error.unwrap_or_default());
+    }
+    let up = bytes as f64 * 8.0 / up_s / 1e6;
+    let down = bytes as f64 * 8.0 / down_s / 1e6;
+    let p = probe(node, fp, 30).await.ok();
+    let spikes = p.as_ref().and_then(|v| v["spike_pct"].as_f64()).unwrap_or(0.0);
+    // The stream flows host -> client; use the slower direction to stay safe either way.
+    let rec = crate::netdiag::recommend_bitrate(up.min(down), spikes);
+    node.event("out", &peer.name, "speedtest", bytes * 2, true, format!("up {up:.0} Mbps, down {down:.0} Mbps"));
+    Ok(json!({"peer": peer.name, "via": addr, "mib": bytes / 1024 / 1024, "up_mbps": up, "down_mbps": down,
+              "latency": p, "recommended_moonlight_mbps": rec}))
+}
+
 async fn pair_with(node: &Node, target: &str, code: &str) -> Result<Peer> {
     if proto::normalize_code(code).len() != 16 {
         bail!("pairing codes have 16 letters and digits");
@@ -789,6 +901,18 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
         "ping" => {
             ping(node, str_arg(req, "peer")?).await?;
             Ok(json!({}))
+        }
+        "wifi" => {
+            let scan = req.get("scan").and_then(|v| v.as_bool()).unwrap_or(false);
+            Ok(serde_json::to_value(tokio::task::spawn_blocking(move || crate::netdiag::wifi(scan)).await?)?)
+        }
+        "probe" => {
+            let n = req.get("n").and_then(|v| v.as_u64()).unwrap_or(30) as u32;
+            probe(node, str_arg(req, "peer")?, n).await
+        }
+        "speedtest" => {
+            let mib = req.get("mib").and_then(|v| v.as_u64()).unwrap_or(32);
+            speedtest(node, str_arg(req, "peer")?, mib).await
         }
         "set" => {
             {

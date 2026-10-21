@@ -22,6 +22,9 @@ ALLOWED = {
     'set': {'autosync', 'peer', 'receive_dir'},
     'unpair': {'peer'},
     'ping': {'peer'},
+    'wifi': {'scan'},
+    'probe': {'peer', 'n'},
+    'speedtest': {'peer', 'mib'},
 }
 
 

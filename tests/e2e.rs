@@ -72,6 +72,15 @@ async fn pair_send_and_reject() {
     call(&a, json!({"cmd": "send", "peer": b_fp, "text": "hello from a"})).await.unwrap();
     call(&a, json!({"cmd": "ping", "peer": b_fp})).await.unwrap();
 
+    // Network helper: latency probe and two-way speed test over the paired link.
+    let p = call(&a, json!({"cmd": "probe", "peer": b_fp, "n": 10})).await.unwrap();
+    assert_eq!(p["rtts_ms"].as_array().unwrap().len(), 10, "{p}");
+    let s = call(&a, json!({"cmd": "speedtest", "peer": b_fp, "mib": 4})).await.unwrap();
+    assert!(s["up_mbps"].as_f64().unwrap() > 1.0 && s["down_mbps"].as_f64().unwrap() > 1.0, "{s}");
+    assert!(s["recommended_moonlight_mbps"].as_u64().unwrap() >= 5, "{s}");
+    let w = call(&a, json!({"cmd": "wifi"})).await.unwrap();
+    assert!(w.get("advice").is_some(), "{w}");
+
     // Files and a folder, with unsafe-looking names.
     let src = root.join("src");
     std::fs::create_dir_all(src.join("folder/sub")).unwrap();

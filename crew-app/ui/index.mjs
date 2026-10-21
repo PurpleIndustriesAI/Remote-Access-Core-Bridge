@@ -213,6 +213,8 @@ export default function RemoteAccessCrew() {
     h('label', null, 'Files or folders on this machine (one path per line)', h('textarea', { value: paths, onChange: e => setPaths(e.target.value), placeholder: 'C:\\Users\\you\\Documents\\report.pdf', style: { minHeight: 60 } })),
     h('div', { className: 'row', style: { marginTop: 8 } }, h('button', { disabled: disabled || !peers.length || !paths.trim(), onClick: () => act('send', { ...sendTo, paths: paths.split('\n').map(s => s.trim()).filter(Boolean) }).then(() => setPaths('')) }, 'Send files')))
 
+  const network = h(NetworkPanel, { api, peers, disabled })
+
   const events = data?.events || []
   const activity = h('div', { className: 'card' },
     h('h2', null, 'Activity'),
@@ -228,5 +230,83 @@ export default function RemoteAccessCrew() {
     notice && h('div', { className: 'notice', role: 'status' }, notice),
     h('div', { className: 'grid' },
       h('div', null, thisMachine, peerList, pairCard),
-      h('div', null, sendCard, activity)))
+      h('div', null, network, sendCard, activity)))
+}
+
+// Live Wi-Fi meter, advice, and per-peer speed test. Polls every second only while the
+// signal finder is on; otherwise refreshes every 10 seconds.
+function NetworkPanel({ api, peers, disabled }) {
+  const [wifi, setWifi] = useState(null)
+  const [finder, setFinder] = useState(false)
+  const [history, setHistory] = useState([])
+  const [best, setBest] = useState(0)
+  const [test, setTest] = useState(null)
+  const [testing, setTesting] = useState('')
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let alive = true, n = 0
+    const tick = async () => {
+      try {
+        const r = await api.post(`${BASE}/wifi`, { scan: !finder || n % 5 === 0 })
+        if (!alive || !r.result) return
+        const w = r.result
+        setWifi(prev => (w.same_network?.length || !prev) ? w : { ...w, same_network: prev.same_network, advice: prev.advice })
+        if (w.link?.connected) {
+          setHistory(hs => [...hs.slice(-59), w.link.signal])
+          setBest(b => Math.max(b, w.link.signal))
+        }
+        setErr('')
+      } catch (e) { if (alive) setErr(e.message) }
+      n++
+    }
+    tick()
+    const t = setInterval(tick, finder ? 1000 : 10000)
+    return () => { alive = false; clearInterval(t) }
+  }, [api, finder])
+
+  async function speed(p) {
+    setTesting(p.fingerprint); setErr(''); setTest(null)
+    try { const r = await api.post(`${BASE}/speedtest`, { peer: p.fingerprint, mib: 32 }); setTest(r.result) }
+    catch (e) { setErr(e.message) } finally { setTesting('') }
+  }
+
+  const l = wifi?.link
+  const prev = history.length > 1 ? history[history.length - 2] : null
+  const trend = prev == null || !l ? '' : l.signal > prev ? '▲ better' : l.signal < prev ? '▼ worse' : '● steady'
+  const tone = s => s >= 70 ? '#047857' : s >= 50 ? '#b45309' : 'var(--danger,#b91c1c)'
+  const spark = history.length > 1 ? history.map((s, i) => `${(i / 59) * 100},${30 - (s / 100) * 30}`).join(' ') : ''
+
+  return h('div', { className: 'card' },
+    h('div', { className: 'row spread' }, h('h2', { style: { margin: 0 } }, 'Network'),
+      h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: finder, onChange: e => { setFinder(e.target.checked); setHistory([]); setBest(0) } }), 'Live signal finder')),
+    err && h('small', { className: 'fail', role: 'alert' }, err),
+    !wifi ? h('p', null, 'Reading Wi-Fi…') : !wifi.available ? h('p', null, 'No Wi-Fi information on this machine.') : h(React.Fragment, null,
+      l?.connected && h('div', { style: { margin: '10px 0' } },
+        h('div', { className: 'row', style: { alignItems: 'baseline' } },
+          h('span', { style: { fontSize: 30, fontWeight: 700, color: tone(l.signal) }, 'aria-live': finder ? 'polite' : 'off' }, `${l.signal}%`),
+          h('span', null, `${l.band} · channel ${l.channel} · ${l.radio || 'Wi-Fi'}`),
+          finder && h('span', { className: 'chip' }, trend), finder && h('span', { className: 'chip ok' }, `best ${best}%`)),
+        h('div', { style: { height: 6, background: 'var(--border)', borderRadius: 3, marginTop: 6 } },
+          h('div', { style: { width: `${l.signal}%`, height: '100%', background: tone(l.signal), borderRadius: 3, transition: 'width .4s' } })),
+        h('small', null, `Link ${Math.round(l.rx_mbps)} / ${Math.round(l.tx_mbps)} Mbps (receive / send)`),
+        finder && spark && h('svg', { viewBox: '0 0 100 30', preserveAspectRatio: 'none', style: { width: '100%', height: 40, marginTop: 6 }, 'aria-label': 'Signal over the last minute' },
+          h('polyline', { points: spark, fill: 'none', stroke: 'var(--accent,#7c3aed)', strokeWidth: 1.5, vectorEffect: 'non-scaling-stroke' })),
+        finder && h('small', null, 'Move the device or router slowly. Stop where the number is highest.')),
+      wifi.same_network?.length > 1 && h('div', { style: { margin: '8px 0' } },
+        h('small', null, 'Your network on each band:'),
+        ...wifi.same_network.map(p => h('div', { key: p.bssid, className: 'row', style: { fontSize: 12, margin: '3px 0' } },
+          h('span', { className: `chip ${p.current ? 'ts' : ''}` }, p.current ? 'Connected' : 'Available'),
+          `${p.band} channel ${p.channel} · ${p.signal}%${p.utilization != null ? ` · ${p.utilization}% busy` : ''}`))),
+      ...(wifi.advice || []).map((a, i) => h('div', { key: i, className: 'row', style: { fontSize: 12, margin: '6px 0', alignItems: 'flex-start', flexWrap: 'nowrap' } },
+        h('span', { className: `chip ${a.level === 'good' ? 'ok' : a.level === 'warn' ? 'warn' : ''}` }, a.level === 'good' ? 'Good' : a.level === 'warn' ? 'Fix' : 'Tip'), h('span', null, a.text)))),
+    h('div', { style: { borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 } },
+      h('small', null, 'Speed test to a paired device (32 MB each way over the encrypted link):'),
+      h('div', { className: 'row', style: { marginTop: 6 } }, ...peers.map(p => h('button', { key: p.fingerprint, disabled: disabled || !!testing, onClick: () => speed(p) }, testing === p.fingerprint ? 'Testing…' : `Test ${p.name}`))),
+      !peers.length && h('small', null, 'Pair a device to test the path between them.'),
+      test && h('div', { style: { marginTop: 10, fontSize: 13 } },
+        h('div', null, `Upload ${Math.round(test.up_mbps)} Mbps · Download ${Math.round(test.down_mbps)} Mbps`),
+        test.latency && h('div', null, `Latency ${test.latency.avg_ms.toFixed(1)} ms · jitter ${test.latency.jitter_ms.toFixed(1)} ms · delayed ${test.latency.spike_pct.toFixed(0)}%`),
+        h('div', { style: { marginTop: 6, fontWeight: 600 } }, `Set Moonlight's video bitrate to about ${test.recommended_moonlight_mbps} Mbps`),
+        h('small', null, 'Moonlight: Settings, Video bitrate. Higher than this risks stutter and blocky frames on this link.'))))
 }

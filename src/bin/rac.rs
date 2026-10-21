@@ -16,6 +16,9 @@ USAGE:
   rac ping PEER                   Check that a peer is reachable and still trusted
   rac sync on|off [--peer PEER]   Turn automatic clipboard sync on or off
   rac unpair PEER                 Forget a peer (it can no longer connect)
+  rac net [--watch]               Wi-Fi signal, band, channel, and advice (--watch: live signal finder)
+  rac probe PEER                  Latency and jitter to a peer
+  rac speedtest PEER              Two-way throughput and a suggested Moonlight bitrate
   rac version
 
 PEER is a peer name or the start of its fingerprint.";
@@ -162,6 +165,50 @@ fn real_main() -> Result<()> {
             let fp = resolve_peer(args.get(1).context("missing peer")?)?;
             call(json!({"cmd": "unpair", "peer": fp}))?;
             println!("Peer removed.");
+            Ok(())
+        }
+        "net" => {
+            // Works without the bridge: it only reads local Wi-Fi state.
+            let w = rac::netdiag::wifi(true);
+            if !w.available {
+                bail!("no Wi-Fi information available on this machine");
+            }
+            let l = &w.link;
+            println!("Wi-Fi: {} | {} channel {} | {} | signal {}% | link {:.0}/{:.0} Mbps", if l.connected { "connected" } else { "not connected" }, l.band, l.channel, l.radio, l.signal, l.rx_mbps, l.tx_mbps);
+            for p in &w.same_network {
+                let busy = p.utilization.map(|u| format!(", {u}% busy")).unwrap_or_default();
+                println!("  {} {} channel {} signal {}%{}", if p.current { "*" } else { " " }, p.band, p.channel, p.signal, busy);
+            }
+            for a in &w.advice {
+                println!("[{}] {}", a.level, a.text);
+            }
+            if args.get(1).map(String::as_str) == Some("--watch") {
+                println!("\nSignal finder: walk the device around; Ctrl+C to stop.");
+                let mut best = 0u32;
+                let mut last = l.signal;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let l = rac::netdiag::wifi(false).link;
+                    best = best.max(l.signal);
+                    let trend = if l.signal > last { "better" } else if l.signal < last { "worse " } else { "same  " };
+                    last = l.signal;
+                    let bar = "#".repeat((l.signal / 5) as usize);
+                    println!("{:>3}% {:<20} {} | best {}% | {} ch {} | {:.0} Mbps", l.signal, bar, trend, best, l.band, l.channel, l.rx_mbps.min(l.tx_mbps));
+                }
+            }
+            Ok(())
+        }
+        "probe" => {
+            let fp = resolve_peer(args.get(1).context("missing peer")?)?;
+            let r = call(json!({"cmd": "probe", "peer": fp}))?;
+            println!("{} via {}: avg {:.1} ms, min {:.1}, max {:.1}, jitter {:.1} ms, delayed frames {:.0}%", r["peer"].as_str().unwrap_or("?"), r["via"].as_str().unwrap_or("?"), r["avg_ms"].as_f64().unwrap_or(0.0), r["min_ms"].as_f64().unwrap_or(0.0), r["max_ms"].as_f64().unwrap_or(0.0), r["jitter_ms"].as_f64().unwrap_or(0.0), r["spike_pct"].as_f64().unwrap_or(0.0));
+            Ok(())
+        }
+        "speedtest" => {
+            let fp = resolve_peer(args.get(1).context("missing peer")?)?;
+            let r = call(json!({"cmd": "speedtest", "peer": fp}))?;
+            println!("{} via {}: upload {:.0} Mbps, download {:.0} Mbps", r["peer"].as_str().unwrap_or("?"), r["via"].as_str().unwrap_or("?"), r["up_mbps"].as_f64().unwrap_or(0.0), r["down_mbps"].as_f64().unwrap_or(0.0));
+            println!("Suggested Moonlight video bitrate: {} Mbps", r["recommended_moonlight_mbps"]);
             Ok(())
         }
         "version" | "--version" => {

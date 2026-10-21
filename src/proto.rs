@@ -26,7 +26,14 @@ pub enum Msg {
     Text { len: u64 },
     Image { len: u64 },
     Files { files: Vec<FileEntry> },
+    /// Latency probe: `n` 8-byte frames are echoed back one at a time.
+    Echo { n: u32 },
+    /// Throughput test: the receiver discards `up` bytes, then sends `down` bytes back.
+    Bench { up: u64, down: u64 },
 }
+
+pub const MAX_ECHO: u32 = 200;
+pub const MAX_BENCH: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Reply {
