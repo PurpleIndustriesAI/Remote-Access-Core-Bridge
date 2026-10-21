@@ -1,0 +1,27 @@
+#include <winver.h>
+
+1 ICON "remote-access-crew.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "Purple Industries"
+      VALUE "FileDescription", "Remote Access Crew"
+      VALUE "ProductName", "Remote Access Crew"
+      VALUE "FileVersion", "0.1.0"
+      VALUE "ProductVersion", "0.1.0"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Purple Industries. All rights reserved."
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

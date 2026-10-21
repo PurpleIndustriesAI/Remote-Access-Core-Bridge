@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Remote Access Crew">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#2a1b4a"/>
+  <!-- back monitor -->
+  <rect x="25" y="11" width="28" height="19" rx="3" fill="none" stroke="#c4b5fd" stroke-width="3.2"/>
+  <path d="M39 30v4M34 35h10" stroke="#c4b5fd" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- front monitor -->
+  <rect x="11" y="27" width="28" height="19" rx="3" fill="#2a1b4a" stroke="#a78bfa" stroke-width="3.2"/>
+  <path d="M25 46v4M20 51h10" stroke="#a78bfa" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- two-way link -->
+  <path d="M17 37h16M21 33l-4 4 4 4M29 33l4 4-4 4" fill="none" stroke="#f5f3ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
