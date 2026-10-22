@@ -26,13 +26,17 @@ Last updated: 2026-10-22.
 | Item | Status | Evidence / next step |
 |---|---|---|
 | Rebrand to "Remote Access Crew" (name, logo, taskbar, Task Manager, Linux launcher) | Done (unverified) | Merged in Moonlight-Crew PR #3. Needs a Windows build on Miku and a visual check. Settings and pairing locations deliberately unchanged. |
-| Automatic reconnect with a Settings toggle | Done (unverified) | Merged in PR #4: on by default, 5 attempts with backoff, "Stop reconnecting" button, never after a user disconnect. Needs a build and a Wi-Fi-off test on Miku. |
+| Automatic reconnect with a Settings toggle | Done (unverified) | Merged in PR #4: on by default, 5 attempts with backoff, "Stop reconnecting" button, never after a user disconnect. Not in Miku's installed client yet (Miku's agent checked the binary on 2026-10-22). Needs a build of 4f36bf3 or later and a Wi-Fi-off test. |
 | Follow display resolution and free cursor | Done (verified by Miku's agent) | Client reports native 1050x1680 portrait and a free cursor. |
+| Recommended stream settings on Miku | Planned | 60 fps, about 20 Mbps, automatic bitrate adjustment on (currently 30 fps, 29.5 Mbps, adjustment off). Apply after the new client is installed; refine with `rac speedtest`. |
 | Pairing parser security fix | Done (verified) | Independent local test of every truncated challenge. |
 | Disable or repoint the upstream update check | Planned | So the fork never offers to replace itself with upstream Moonlight. |
 | Linux client build | Planned | Not built or tested yet. |
 
 ## 3. Clipboard and file bridge (this repository)
+
+The streaming client's own clipboard is text only and one way (client to host). Image and file
+copy, and host-to-client copy, come only from this bridge.
 
 | Item | Status | Evidence / next step |
 |---|---|---|
@@ -41,7 +45,7 @@ Last updated: 2026-10-22.
 | Network helper: live Wi-Fi signal finder, advice, speed test | Done (verified) | `rac net` on the host read the 2.4/5 GHz choice correctly; probe and speed test covered by tests. |
 | Host install with Start Menu and Startup shortcuts and a scoped firewall rule | Done (verified) | Installed under `%LOCALAPPDATA%\Programs\RemoteAccessCrew`, firewall rule limited to LocalSubnet and Tailscale. |
 | Release v0.2.0 (Windows) | Done (verified) | Pre-release with SHA256SUMS; download re-verified. |
-| Install and pair on Miku | Blocked: Miku's Claude | Instructions in Moonlight-Crew PR #1 (HOST_20261021_02). Miku's bridge port was closed at 01:35 UTC. |
+| Install and pair on Miku | Blocked: Miku install | Install v0.2.0 (Windows zip built from commit 30b90d0). Pairing is live only: show the code on one machine and type it on the other within 5 minutes; never post codes in GitHub threads. |
 | Cross-machine copy and paste over LAN | Blocked: depends on pairing | Then repeat over Tailscale once Miku joins the tailnet. |
 | Linux build and live test | Blocked: CI | GitHub Actions does not start on private BarnsL repos (account billing or limit). Local container build is the fallback. |
 | Crew app page | Blocked: owner trust | Crew requires the owner to trust the app in Settings. |
