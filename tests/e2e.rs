@@ -19,53 +19,73 @@ async fn call(dir: &Path, v: Value) -> anyhow::Result<Value> {
 }
 
 async fn wait_up(dir: &Path) {
+    let mut last = String::new();
     for _ in 0..100 {
-        if call(dir, json!({"cmd": "status"})).await.is_ok() {
-            return;
+        match call(dir, json!({"cmd": "status"})).await {
+            Ok(_) => return,
+            Err(e) => last = format!("{e:#}"),
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("bridge did not start");
+    panic!("bridge did not start: {last}");
+}
+
+/// A block of 100 ports where each bridge's peer port and control port (+1) can be bound.
+/// Fixed ports break when Windows reserves their range (Hyper-V, WSL and Docker do).
+fn free_base() -> u16 {
+    use std::net::TcpListener;
+    let ok = |p: u16| TcpListener::bind(("0.0.0.0", p)).is_ok() && TcpListener::bind(("127.0.0.1", p + 1)).is_ok();
+    (20000..60000).step_by(100).find(|&b| (1..=5).all(|k| ok(b + k * 10))).expect("no free port block")
 }
 
 fn start(dir: &Path) {
     let d = dir.to_path_buf();
-    tokio::spawn(async move { daemon::run(daemon::Options { dir: d, clipboard: false }).await });
+    tokio::spawn(async move {
+        if let Err(e) = daemon::run(daemon::Options { dir: d.clone(), clipboard: false }).await {
+            eprintln!("bridge in {} exited: {e:#}", d.display());
+        }
+    });
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pair_send_and_reject() {
     let root = std::env::temp_dir().join(format!("rac-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    let a = node_dir(&root, "a", 49710);
-    let b = node_dir(&root, "b", 49720);
-    let c = node_dir(&root, "c", 49730);
+    let base = free_base();
+    let a_addr = format!("127.0.0.1:{}", base + 10);
+    let a = node_dir(&root, "a", base + 10);
+    let b = node_dir(&root, "b", base + 20);
+    let c = node_dir(&root, "c", base + 30);
+
+    // A terminal running as another Windows user has no token; the error says what to do.
+    let err = call(&c, json!({"cmd": "status"})).await.unwrap_err();
+    assert!(format!("{err:#}").contains("normal (not Administrator) terminal"), "{err:#}");
     for d in [&a, &b, &c] {
         start(d);
         wait_up(d).await;
     }
 
     // Without an open pairing window, a correct-looking code is refused.
-    let err = call(&b, json!({"cmd": "pair", "addr": "127.0.0.1:49710", "code": "AAAA-AAAA-AAAA-AAAA"})).await.unwrap_err();
+    let err = call(&b, json!({"cmd": "pair", "addr": a_addr, "code": "AAAA-AAAA-AAAA-AAAA"})).await.unwrap_err();
     assert!(format!("{err:#}").contains("open pairing there first"), "{err:#}");
 
     // Five wrong codes close the window; the right code is then refused too.
     let code = call(&a, json!({"cmd": "pair_code"})).await.unwrap()["code"].as_str().unwrap().to_string();
     for _ in 0..5 {
-        assert!(call(&c, json!({"cmd": "pair", "addr": "127.0.0.1:49710", "code": "BBBB-BBBB-BBBB-BBBB"})).await.is_err());
+        assert!(call(&c, json!({"cmd": "pair", "addr": a_addr, "code": "BBBB-BBBB-BBBB-BBBB"})).await.is_err());
     }
-    assert!(call(&c, json!({"cmd": "pair", "addr": "127.0.0.1:49710", "code": code})).await.is_err());
+    assert!(call(&c, json!({"cmd": "pair", "addr": a_addr, "code": code})).await.is_err());
 
     // Proper pairing.
     let code = call(&a, json!({"cmd": "pair_code"})).await.unwrap()["code"].as_str().unwrap().to_string();
-    let r = call(&b, json!({"cmd": "pair", "addr": "127.0.0.1:49710", "code": code})).await.unwrap();
+    let r = call(&b, json!({"cmd": "pair", "addr": a_addr, "code": code})).await.unwrap();
     let a_fp = r["fingerprint"].as_str().unwrap().to_string();
     let sa = call(&a, json!({"cmd": "status"})).await.unwrap();
     assert_eq!(sa["fingerprint"].as_str().unwrap(), a_fp);
     assert_eq!(sa["peers"].as_array().unwrap().len(), 1);
     let b_fp = sa["peers"][0]["fingerprint"].as_str().unwrap().to_string();
     // The code is single use.
-    assert!(call(&c, json!({"cmd": "pair", "addr": "127.0.0.1:49710", "code": code})).await.is_err());
+    assert!(call(&c, json!({"cmd": "pair", "addr": a_addr, "code": code})).await.is_err());
 
     // Both directions work.
     call(&b, json!({"cmd": "send", "text": "hello from b"})).await.unwrap();
@@ -101,10 +121,10 @@ async fn pair_send_and_reject() {
 
     // An unpaired machine that pins A's identity is rejected during the TLS handshake.
     let mut st = config::load_state(&c).unwrap();
-    st.peers.push(config::Peer { name: "a".into(), fingerprint: a_fp.clone(), addrs: vec!["127.0.0.1:49710".into()], autosync: true, paired_at: 0 });
+    st.peers.push(config::Peer { name: "a".into(), fingerprint: a_fp.clone(), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0 });
     config::save_state(&c, &st).unwrap();
     // C loaded its state at start, so restart is not possible in-process; use a fresh node D instead.
-    let d = node_dir(&root, "d", 49740);
+    let d = node_dir(&root, "d", base + 40);
     let mut st = config::load_state(&d).unwrap();
     st.peers = config::load_state(&c).unwrap().peers;
     config::save_state(&d, &st).unwrap();
@@ -114,9 +134,9 @@ async fn pair_send_and_reject() {
     assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
 
     // A peer that pins the wrong fingerprint for A refuses to talk to it.
-    let e = node_dir(&root, "e", 49750);
+    let e = node_dir(&root, "e", base + 50);
     let mut st = config::load_state(&e).unwrap();
-    st.peers.push(config::Peer { name: "fake".into(), fingerprint: "00".repeat(32), addrs: vec!["127.0.0.1:49710".into()], autosync: true, paired_at: 0 });
+    st.peers.push(config::Peer { name: "fake".into(), fingerprint: "00".repeat(32), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0 });
     config::save_state(&e, &st).unwrap();
     start(&e);
     wait_up(&e).await;

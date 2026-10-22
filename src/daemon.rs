@@ -958,7 +958,10 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
 /// Client side of the control API, used by the CLI.
 pub async fn control_call(dir: &Path, req: Value) -> Result<Value> {
     let state = config::load_state(dir)?;
-    let token = std::fs::read_to_string(dir.join("control.token")).context("the bridge has not run yet")?;
+    // Each Windows user has its own token. An elevated terminal often runs as another account.
+    const OTHER_USER: &str = "run rac in a normal (not Administrator) terminal, as the same Windows user that runs the bridge";
+    let token = std::fs::read_to_string(dir.join("control.token"))
+        .with_context(|| format!("no bridge has run for this Windows user ({}); {OTHER_USER}", dir.display()))?;
     let mut req = req;
     req["token"] = Value::String(token.trim().to_string());
     let sock = TcpStream::connect(("127.0.0.1", state.settings.port + config::CONTROL_PORT_OFFSET))
@@ -974,6 +977,9 @@ pub async fn control_call(dir: &Path, req: Value) -> Result<Value> {
     if v["ok"].as_bool() == Some(true) {
         Ok(v["result"].clone())
     } else {
-        Err(anyhow!("{}", v["error"].as_str().unwrap_or("request failed")))
+        match v["error"].as_str().unwrap_or("request failed") {
+            "bad control token" => Err(anyhow!("the bridge refused this terminal's control token; {OTHER_USER}")),
+            e => Err(anyhow!("{e}")),
+        }
     }
 }
