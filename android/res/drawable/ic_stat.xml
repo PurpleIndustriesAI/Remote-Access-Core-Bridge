@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two linked monitors, white silhouette for the status bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M2,4h9v7H2zM3.5,5.5v4h6v-4zM5,12h3v1.5H5zM13,9h9v7h-9zM14.5,10.5v4h6v-4zM16,17h3v1.5h-3zM10,14.5l2,-1.5v1h3v1h-3v1z" />
+</vector>

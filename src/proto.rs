@@ -226,4 +226,13 @@ mod tests {
         assert!(!proof_matches(&p, &pair_proof(&c, "server", "s", "c")));
         assert!(!proof_matches(&p, &pair_proof("AAAA-AAAA-AAAA-AAAA", "client", "s", "c")));
     }
+
+    /// Same vector as android/test/RacTest.java, so the phone app and the desktop agree.
+    #[test]
+    fn proof_known_vector() {
+        assert_eq!(
+            pair_proof("abcd-efgh-2345-6789", "client", &"aa".repeat(32), &"bb".repeat(32)),
+            "ffd48229226b9d27dd14b831a871581a1e8227a323da0886f289ebd95047abec"
+        );
+    }
 }

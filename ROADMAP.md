@@ -47,7 +47,8 @@ copy, and host-to-client copy, come only from this bridge.
 | Network helper: live Wi-Fi signal finder, advice, speed test | Done (verified) | `rac net` on the host read the 2.4/5 GHz choice correctly; probe and speed test covered by tests. |
 | Host install with Start Menu and Startup shortcuts and a scoped firewall rule | Done (verified) | Installed under `%LOCALAPPDATA%\Programs\RemoteAccessCrew`, firewall rule limited to LocalSubnet and Tailscale. |
 | Release v0.2.0 (Windows) | Done (verified) | Pre-release with SHA256SUMS; download re-verified. |
-| Install and pair on Miku | Blocked: Miku install | Install v0.2.0 (Windows zip built from commit 30b90d0). Pairing is live only: show the code on one machine and type it on the other within 5 minutes; never post codes in GitHub threads. |
+| Android app (`android/`): pairing, text, image and file copy both ways, opens the stream app | Done (unverified) | Built and signed 0.3.0; pairing proof, path and address checks match the desktop (`android/test.ps1`, `proof_known_vector`). Next: install on the Fold and test both directions over LAN and Tailscale. |
+| Install and pair on Miku | Done (verified) | Paired; text, images and files went both ways (logs on both machines). Install v0.2.0 (Windows zip built from commit 30b90d0). Pairing is live only: show the code on one machine and type it on the other within 5 minutes; never post codes in GitHub threads. |
 | Cross-machine copy and paste over LAN | Blocked: depends on pairing | Then repeat over Tailscale once Miku joins the tailnet. |
 | Linux build and live test | Blocked: CI | GitHub Actions does not start on private BarnsL repos (account billing or limit). Local container build is the fallback. |
 | Crew app page | Blocked: owner trust | Crew requires the owner to trust the app in Settings. |
