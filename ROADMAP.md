@@ -17,7 +17,9 @@ Last updated: 2026-10-22.
 | Automatic portrait and landscape | Done (verified) | Host helper v5: rotation within about 0.6 s of the client's request; landscape restored on disconnect. Live Miku sessions 14:57 to 14:58 on 2026-10-21. |
 | Secure elevated logging | Done (verified) | v4 security fix: admin-owned log in the protected install folder. |
 | Wi-Fi prefers 5 GHz | Done (verified) | Adapter "Preferred Band" set to 5 GHz; host on Wi-Fi 6 channel 100 at 85% signal. |
-| NVIDIA encoding (NVENC/HEVC) | In progress | Root cause: Optimus panel on Intel GPU, no software MUX on AORUS 15G YB. Virtual monitor driver audited, installed, and shown on the NVIDIA GPU. Next: owner approves `Enable-VddNvenc.ps1`, then a live stream confirms `hevc_nvenc`. See Moonlight-Crew `windows-host/nvidia-virtual-display/`. |
+| NVIDIA encoding (NVENC/HEVC) | Done (verified) | Root cause: Optimus panel on Intel GPU, no software MUX on AORUS 15G YB. Fix: virtual monitor on the NVIDIA GPU. Live sessions on 2026-10-21 (20:40 to 21:25) used `hevc_nvenc` at 1920x1080. See Moonlight-Crew `windows-host/nvidia-virtual-display/`. |
+| Host rename to "Remote Access Crew (Host)" | Waiting: owner approval | `Rebrand-Host.ps1` sets the Sunshine name, service display name, and Start Menu shortcut. It needs one admin approval at the host. |
+| Host AI view (time-boxed, owner-approved) | In review | Moonlight-Crew PR #7 is the single host adapter (PR #10 closed). Owner approves 3, 6 or 12 hours via UAC; admin-only grant file; no cursor. 38 checks pass. |
 | Intel driver update for HEVC on QuickSync | Planned, fallback only | Only needed if the NVIDIA virtual display fails. |
 | Virtual display driver pipe hardening | Planned | Upstream driver exposes a local control pipe to all local processes. Track upstream; low risk on a single-user host. |
 
@@ -25,8 +27,8 @@ Last updated: 2026-10-22.
 
 | Item | Status | Evidence / next step |
 |---|---|---|
-| Rebrand to "Remote Access Crew" (name, logo, taskbar, Task Manager, Linux launcher) | Done (unverified) | Merged in Moonlight-Crew PR #3. Needs a Windows build on Miku and a visual check. Settings and pairing locations deliberately unchanged. |
-| Automatic reconnect with a Settings toggle | Done (unverified) | Merged in PR #4: on by default, 5 attempts with backoff, "Stop reconnecting" button, never after a user disconnect. Not in Miku's installed client yet (Miku's agent checked the binary on 2026-10-22). Needs a build of 4f36bf3 or later and a Wi-Fi-off test. |
+| Rebrand to "Remote Access Crew" (name, logo, taskbar, Task Manager, Linux launcher) | Done (verified by Miku's agent) | Merged in PR #3 and PR #8. Miku runs client 6.1.3 with the title "Remote Access Crew (Client)". Settings and pairing locations deliberately unchanged. |
+| Automatic reconnect with a Settings toggle | Done (verified by Miku's agent) | Merged in PR #4: on by default, 5 attempts with backoff, "Stop reconnecting" button, never after a user disconnect. Miku's client 6.1.1 reconnected on its own after a host restart. |
 | Follow display resolution and free cursor | Done (verified by Miku's agent) | Client reports native 1050x1680 portrait and a free cursor. |
 | Recommended stream settings on Miku | Planned | 60 fps, about 20 Mbps, automatic bitrate adjustment on (currently 30 fps, 29.5 Mbps, adjustment off). Apply after the new client is installed; refine with `rac speedtest`. |
 | Pairing parser security fix | Done (verified) | Independent local test of every truncated challenge. |
@@ -55,7 +57,7 @@ copy, and host-to-client copy, come only from this bridge.
 
 | Item | Status | Next step |
 |---|---|---|
-| Shared channel | Working one way | Moonlight-Crew PR #1. The host posts tasks; Miku's agent has not replied since 2026-10-21 20:54 UTC. The owner can prompt it locally. |
+| Shared channel | Working both ways | Moonlight-Crew PR #1. Latest: Miku MIKU_REPLY_11 (client 6.1.3); host HOST_20261022_09 (AI view merge). |
 | Direct agent-to-agent link | Planned | Remote Access Crew's paired link can carry signed task messages once Miku is paired. |
 
 ## 5. Crew Mesh: Tailscale with our own accounts
