@@ -210,7 +210,7 @@ async fn handle_peer(node: Arc<Node>, sock: TcpStream, addr: SocketAddr) -> Resu
     }
     node.learn_addr(&fp, addr.ip());
     let peer = node.peer_name(&fp);
-    let result = receive(&node, &mut tls, msg, &peer).await;
+    let result = receive(&node, &mut tls, msg, &peer, &fp).await;
     let reply = match &result {
         Ok(()) => Reply::ok(),
         Err(e) => Reply::err(format!("{e:#}")),
@@ -252,7 +252,7 @@ fn accept_pairing(node: &Node, client_fp: &str, addr: SocketAddr, proof: &str, n
     }
     list.truncate(8);
     let name = clean_name(name);
-    upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now() });
+    upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions: Default::default() });
     node.event("in", &name, "pair", 0, true, "paired");
     Reply { ok: true, proof: Some(server_proof), name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), error: None }
 }
@@ -278,7 +278,15 @@ async fn read_body<R: AsyncRead + Unpin>(r: &mut R, len: u64) -> Result<Vec<u8>>
     Ok(b)
 }
 
-async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg: Msg, peer: &str) -> Result<()> {
+fn require_permission(node: &Node, fp: &str, kind: &str) -> Result<()> {
+    let peer = node.peer(fp).context("peer is no longer paired")?;
+    if !peer.permissions.allows(kind) {
+        bail!("local client approval required for {kind}");
+    }
+    Ok(())
+}
+
+async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg: Msg, peer: &str, fp: &str) -> Result<()> {
     let settings = node.state.lock().unwrap().settings.clone();
     match msg {
         Msg::Ping => Ok(()),
@@ -317,30 +325,36 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
             Ok(())
         }
         Msg::Text { len } => {
+            require_permission(node, fp, "text")?;
             if len > settings.max_text_bytes {
                 bail!("text is larger than the receiver's limit");
             }
             let b = read_body(s, len).await?;
             let t = String::from_utf8(b).context("text was not valid UTF-8")?;
+            require_permission(node, fp, "text")?;
             apply(node, Content::Text(t)).await?;
             node.event("in", peer, "text", len, true, "copied to clipboard");
             Ok(())
         }
         Msg::Image { len } => {
+            require_permission(node, fp, "image")?;
             if len > settings.max_image_bytes {
                 bail!("image is larger than the receiver's limit");
             }
             let b = read_body(s, len).await?;
             clip::decode_png(&b)?; // validate before touching the clipboard
+            require_permission(node, fp, "image")?;
             apply(node, Content::Image(b)).await?;
             node.event("in", peer, "image", len, true, "copied to clipboard");
             Ok(())
         }
         Msg::Files { files } => {
+            require_permission(node, fp, "files")?;
             let total = receive_files(node, s, files, &settings, peer).await;
             match total {
                 Ok((bytes, roots)) => {
                     let n = roots.len();
+                    require_permission(node, fp, "files")?;
                     apply(node, Content::Files(roots)).await?;
                     node.event("in", peer, "files", bytes, true, format!("{n} item(s) saved and copied to clipboard"));
                     Ok(())
@@ -652,6 +666,9 @@ async fn send_to(node: &Arc<Node>, target: Option<String>, c: Content, explicit:
         bail!(if target.is_some() { "unknown peer" } else { "no paired peers" });
     }
     let kind = c.kind();
+    if !peers.iter().any(|p| p.permissions.allows(kind)) {
+        bail!("local client approval required for {kind}");
+    }
     let limit = if explicit { st.max_batch_bytes } else { st.auto_file_limit };
     let c2 = c.clone();
     let out = match tokio::task::spawn_blocking(move || outgoing(c2, limit)).await? {
@@ -664,7 +681,10 @@ async fn send_to(node: &Arc<Node>, target: Option<String>, c: Content, explicit:
     };
     let mut results = Vec::new();
     for p in &peers {
-        let r = deliver(node, p, &out).await;
+        let r = match require_permission(node, &p.fingerprint, kind) {
+            Ok(()) => deliver(node, p, &out).await,
+            Err(e) => Err(e),
+        };
         match &r {
             Ok(()) => node.event("out", &p.name, kind, out.bytes, true, "delivered"),
             Err(e) => node.event("out", &p.name, kind, out.bytes, false, format!("{e:#}")),
@@ -796,7 +816,7 @@ async fn pair_with(node: &Node, target: &str, code: &str) -> Result<Peer> {
         }
     }
     list.truncate(8);
-    let peer = Peer { name: clean_name(reply.name.as_deref().unwrap_or("peer")), fingerprint: server_fp, addrs: list, autosync: true, paired_at: now() };
+    let peer = Peer { name: clean_name(reply.name.as_deref().unwrap_or("peer")), fingerprint: server_fp, addrs: list, autosync: true, paired_at: now(), permissions: Default::default() };
     upsert_peer(node, peer.clone());
     node.event("out", &peer.name, "pair", 0, true, "paired");
     Ok(peer)
@@ -850,6 +870,7 @@ fn status(node: &Node) -> Value {
     let events: Vec<Event> = node.events.lock().unwrap().iter().take(60).cloned().collect();
     json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "permissions_version": 1,
         "name": node.name,
         "fingerprint": node.id.fingerprint,
         "short_fingerprint": short_fingerprint(&node.id.fingerprint),
@@ -861,6 +882,7 @@ fn status(node: &Node) -> Value {
         "peers": st.peers.iter().map(|p| json!({
             "name": p.name, "fingerprint": p.fingerprint, "short_fingerprint": short_fingerprint(&p.fingerprint),
             "addrs": p.addrs, "autosync": p.autosync, "paired_at": p.paired_at,
+            "permissions": p.permissions,
             "tailscale": p.addrs.iter().any(|a| a.parse::<SocketAddr>().map(|s| net::is_tailscale(&s.ip())).unwrap_or(false)),
         })).collect::<Vec<_>>(),
         "pairing": pair,
@@ -875,6 +897,28 @@ fn str_arg<'a>(req: &'a Value, k: &str) -> Result<&'a str> {
 async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
     match str_arg(req, "cmd")? {
         "status" => Ok(status(node)),
+        "permissions" => {
+            let fp = str_arg(req, "peer")?;
+            let capability = str_arg(req, "capability")?;
+            let allowed = req.get("allowed").and_then(Value::as_bool).context("missing boolean 'allowed'")?;
+            {
+                let mut state = node.state.lock().unwrap();
+                let mut next = state.clone();
+                let peer = next.peers.iter_mut().find(|p| p.fingerprint == fp).context("unknown peer")?;
+                match capability {
+                    "clipboard" => peer.permissions.clipboard = allowed,
+                    "files" => peer.permissions.files = allowed,
+                    _ => bail!("unknown capability"),
+                }
+                // Persist before publishing a grant. A failed write must not
+                // silently grant access in memory.
+                config::save_state(&node.dir, &next)?;
+                *state = next;
+            }
+            node.event("local", &node.peer_name(fp), "permission", 0, true,
+                format!("{capability}: {}", if allowed { "approved until revoked" } else { "revoked" }));
+            Ok(status(node))
+        }
         "pair_code" => {
             let code = proto::new_pair_code();
             let until = Instant::now() + PAIR_WINDOW;

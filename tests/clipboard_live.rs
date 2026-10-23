@@ -82,6 +82,13 @@ async fn clipboard_both_directions() {
     start(&b, false).await;
     let code = call(&a, json!({"cmd": "pair_code"})).await["code"].as_str().unwrap().to_string();
     call(&b, json!({"cmd": "pair", "addr": "127.0.0.1:49810", "code": code})).await;
+    for dir in [&a, &b] {
+        let s = call(dir, json!({"cmd": "status"})).await;
+        let peer = &s["peers"][0]["fingerprint"];
+        for capability in ["clipboard", "files"] {
+            call(dir, json!({"cmd":"permissions","peer":peer,"capability":capability,"allowed":true})).await;
+        }
+    }
 
     // Peer -> clipboard: text.
     call(&b, json!({"cmd": "send", "text": "Remote Access Crew text check"})).await;

@@ -9,6 +9,26 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_PORT: u16 = 48765;
 pub const CONTROL_PORT_OFFSET: u16 = 1;
 
+/// Local consent, bound to the authenticated peer certificate. Pairing alone
+/// grants no data access. Older states fail closed until approved locally.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Permissions {
+    #[serde(default)]
+    pub clipboard: bool,
+    #[serde(default)]
+    pub files: bool,
+}
+
+impl Permissions {
+    pub fn allows(&self, kind: &str) -> bool {
+        match kind {
+            "text" | "image" => self.clipboard,
+            "files" => self.files,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Peer {
     pub name: String,
@@ -19,10 +39,25 @@ pub struct Peer {
     #[serde(default = "yes")]
     pub autosync: bool,
     pub paired_at: u64,
+    #[serde(default)]
+    pub permissions: Permissions,
 }
 
 fn yes() -> bool {
     true
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+    #[test]
+    fn legacy_pairing_does_not_imply_consent() {
+        let peer: Peer = serde_json::from_str(r#"{"name":"old","fingerprint":"abc","addrs":[],"paired_at":0}"#).unwrap();
+        assert!(!peer.permissions.allows("text"));
+        assert!(!peer.permissions.allows("image"));
+        assert!(!peer.permissions.allows("files"));
+        assert!(!Permissions { clipboard:true, files:true }.allows("commands"));
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

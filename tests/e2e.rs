@@ -88,6 +88,18 @@ async fn pair_send_and_reject() {
     assert!(call(&c, json!({"cmd": "pair", "addr": a_addr, "code": code})).await.is_err());
 
     // Both directions work.
+    // Pairing is identity verification, not consent. Explicit sends cannot bypass it.
+    assert_eq!(sa["permissions_version"], 1);
+    assert_eq!(sa["peers"][0]["permissions"]["clipboard"], false);
+    assert!(call(&b, json!({"cmd":"send", "text":"not approved"})).await.is_err());
+    assert!(call(&a, json!({"cmd":"permissions", "peer":"unknown", "capability":"clipboard", "allowed":true})).await.is_err());
+    assert!(call(&a, json!({"cmd":"permissions", "peer":b_fp, "capability":"all", "allowed":true})).await.is_err());
+    call(&b, json!({"cmd":"permissions", "peer":a_fp, "capability":"clipboard", "allowed":true})).await.unwrap();
+    let denied = call(&b, json!({"cmd":"send", "text":"receiver has not approved"})).await.unwrap();
+    assert_eq!(denied["results"][0]["ok"], false);
+    call(&a, json!({"cmd":"permissions", "peer":b_fp, "capability":"clipboard", "allowed":true})).await.unwrap();
+    assert!(config::load_state(&a).unwrap().peers[0].permissions.clipboard);
+    assert!(!config::load_state(&a).unwrap().peers[0].permissions.files);
     call(&b, json!({"cmd": "send", "text": "hello from b"})).await.unwrap();
     call(&a, json!({"cmd": "send", "peer": b_fp, "text": "hello from a"})).await.unwrap();
     call(&a, json!({"cmd": "ping", "peer": b_fp})).await.unwrap();
@@ -108,6 +120,12 @@ async fn pair_send_and_reject() {
     std::fs::write(src.join("folder/sub/data.bin"), vec![7u8; 3_000_000]).unwrap();
     std::fs::write(src.join("folder/CON.txt"), b"reserved name").unwrap();
     let paths = json!([src.join("report.txt"), src.join("folder")]);
+    assert!(call(&b, json!({"cmd":"send", "paths":paths})).await.is_err());
+    call(&b, json!({"cmd":"permissions", "peer":a_fp, "capability":"files", "allowed":true})).await.unwrap();
+    let denied = call(&b, json!({"cmd":"send", "paths":paths})).await.unwrap();
+    assert_eq!(denied["results"][0]["ok"], false);
+    assert!(!a.join("inbox").exists());
+    call(&a, json!({"cmd":"permissions", "peer":b_fp, "capability":"files", "allowed":true})).await.unwrap();
     let r = call(&b, json!({"cmd": "send", "paths": paths})).await.unwrap();
     assert_eq!(r["results"][0]["ok"], json!(true), "{r}");
     let inbox = a.join("inbox");
@@ -121,7 +139,7 @@ async fn pair_send_and_reject() {
 
     // An unpaired machine that pins A's identity is rejected during the TLS handshake.
     let mut st = config::load_state(&c).unwrap();
-    st.peers.push(config::Peer { name: "a".into(), fingerprint: a_fp.clone(), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0 });
+    st.peers.push(config::Peer { name: "a".into(), fingerprint: a_fp.clone(), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard:true, files:true } });
     config::save_state(&c, &st).unwrap();
     // C loaded its state at start, so restart is not possible in-process; use a fresh node D instead.
     let d = node_dir(&root, "d", base + 40);
@@ -136,7 +154,7 @@ async fn pair_send_and_reject() {
     // A peer that pins the wrong fingerprint for A refuses to talk to it.
     let e = node_dir(&root, "e", base + 50);
     let mut st = config::load_state(&e).unwrap();
-    st.peers.push(config::Peer { name: "fake".into(), fingerprint: "00".repeat(32), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0 });
+    st.peers.push(config::Peer { name: "fake".into(), fingerprint: "00".repeat(32), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard:true, files:true } });
     config::save_state(&e, &st).unwrap();
     start(&e);
     wait_up(&e).await;
@@ -150,6 +168,11 @@ async fn pair_send_and_reject() {
     std::fs::write(b.join("control.token"), tok).unwrap();
 
     // After A unpairs B, B can no longer deliver anything to A.
+    call(&a, json!({"cmd":"permissions", "peer":b_fp, "capability":"clipboard", "allowed":false})).await.unwrap();
+    let denied = call(&b, json!({"cmd":"send", "text":"revoked"})).await.unwrap();
+    assert_eq!(denied["results"][0]["ok"], false);
+    assert!(call(&a, json!({"cmd":"send", "text":"revoked outbound"})).await.is_err());
+    assert!(!config::load_state(&a).unwrap().peers[0].permissions.clipboard);
     call(&a, json!({"cmd": "unpair", "peer": b_fp})).await.unwrap();
     let r = call(&b, json!({"cmd": "send", "text": "after unpair"})).await.unwrap();
     assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
