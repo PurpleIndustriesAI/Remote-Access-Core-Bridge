@@ -66,8 +66,26 @@ def routes(ctx):
                 return web.json_response({'error': 'Local operation unavailable: ' + type(exc).__name__}, status=503)
         return handle
 
-    names = {'pair_code': 'pair-code', 'pair_cancel': 'pair-cancel'}
-    return [AppRoute('GET', '/rac/status', operation('status'))] + [
+    async def host_link(request, context):
+        denied = await owner_gate(request, 'remote_access_crew.host_link')
+        if denied is not None:
+            return denied
+        try:
+            raw = await request.read()
+            if len(raw) > SMALL:
+                return web.json_response({'error': 'request too large'}, status=413)
+            body = json.loads(raw or b'{}')
+            if not isinstance(body, dict) or set(body) - {'remove'} or not isinstance(body.get('remove', False), bool):
+                raise ValueError('expected {"remove": bool}')
+            message = await asyncio.to_thread(bridge.host_link_setup, body.get('remove', False))
+            return web.json_response({'result': {'message': message}}, headers={'Cache-Control': 'no-store'})
+        except bridge.BridgeError as exc:
+            return web.json_response({'error': str(exc)}, status=502)
+        except ValueError as exc:
+            return web.json_response({'error': 'Invalid request: ' + str(exc)}, status=400)
+
+    names = {'pair_code': 'pair-code', 'pair_cancel': 'pair-cancel', 'host_app_title': 'host-app-title'}
+    return [AppRoute('GET', '/rac/status', operation('status')), AppRoute('POST', '/rac/host-link', host_link)] + [
         AppRoute('POST', '/rac/' + names.get(c, c), operation(c))
-        for c in ('pair_code', 'pair_cancel', 'pair', 'send', 'set', 'unpair', 'ping', 'wifi', 'probe', 'speedtest')
+        for c in ('pair_code', 'pair_cancel', 'pair', 'send', 'set', 'unpair', 'ping', 'wifi', 'probe', 'speedtest', 'host_app_title')
     ]

@@ -170,7 +170,7 @@ export default function RemoteAccessCrew() {
     h('h2', null, `Paired devices (${peers.length})`),
     !peers.length ? h('p', null, 'No devices yet. Pair one below.') : peers.map(p => h('div', { key: p.fingerprint, className: 'peer' },
       h('div', { className: 'row spread' },
-        h('div', null, h('div', { className: 'name' }, p.name), h('small', null, h('code', null, p.short_fingerprint))),
+        h('div', null, h('div', { className: 'name' }, p.name, / via Moonlight$/.test(p.name) && h('span', { className: 'chip ts', style: { marginLeft: 8 } }, 'Linked by Moonlight')), h('small', null, h('code', null, p.short_fingerprint))),
         h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: !!p.autosync, disabled, onChange: e => act('set', { autosync: e.target.checked, peer: p.fingerprint }) }), 'Sync')),
       h('div', { className: 'row', style: { margin: '6px 0' } }, ...p.addrs.slice(0, 4).map(a => h('span', { key: a, className: `chip ${isTs(a) ? 'ts' : ''}` }, `${isTs(a) ? 'Tailscale' : 'LAN'} ${a}`))),
       h('div', { className: 'row' },
@@ -213,6 +213,29 @@ export default function RemoteAccessCrew() {
     h('label', null, 'Files or folders on this machine (one path per line)', h('textarea', { value: paths, onChange: e => setPaths(e.target.value), placeholder: 'C:\\Users\\you\\Documents\\report.pdf', style: { minHeight: 60 } })),
     h('div', { className: 'row', style: { marginTop: 8 } }, h('button', { disabled: disabled || !peers.length || !paths.trim(), onClick: () => act('send', { ...sendTo, paths: paths.split('\n').map(s => s.trim()).filter(Boolean) }).then(() => setPaths('')) }, 'Send files')))
 
+  const linkOn = !!data?.settings?.moonlight_link
+  const channels = data?.settings?.channels || []
+  const crewLinkOn = channels.includes('crew-link')
+  const streaming = h('div', { className: 'card' },
+    h('h2', null, 'Streaming and Crew Link'),
+    h('div', { className: 'row spread' },
+      h('div', null, h('div', { className: 'name' }, 'Moonlight link (host)'),
+        h('small', null, linkOn
+          ? 'On. Remote Access Core (Client) viewers that this host’s Sunshine already paired link with no code and are approved to send this machine clipboard and files. Remove a linked device below to revoke it.'
+          : 'Off. Turning it on lets Remote Access Core (Client) viewers this host’s Sunshine already paired link without a code, and approves them to send this machine clipboard and files.')),
+      h('span', { className: `chip ${linkOn ? 'ok' : ''}` }, linkOn ? 'On' : 'Off')),
+    h('div', { className: 'row', style: { margin: '8px 0 4px' } },
+      linkOn
+        ? h('button', { disabled, onClick: () => act('host-link', { remove: true }, r => r.message) }, busy === 'host-link' ? 'Working…' : 'Turn off')
+        : h('button', { className: 'primary', disabled, onClick: () => act('host-link', {}, r => r.message) }, busy === 'host-link' ? 'Waiting for Windows approval…' : 'Turn on and publish to Sunshine')),
+    h('small', null, 'Publishing adds this machine’s identity to Sunshine’s app list (the client hides it) and restarts Sunshine, so Windows asks for approval once. It will not run while a stream is live.'),
+    h('div', { className: 'row spread', style: { borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 } },
+      h('div', null, h('div', { className: 'name' }, 'Crew Link channel'),
+        h('small', null, 'Lets Crew Link reach this machine directly over the paired, encrypted link on your LAN or Tailscale. Crew Link still verifies every signed message itself.')),
+      h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: crewLinkOn, disabled,
+        onChange: e => act('set', { channels: e.target.checked ? [...channels.filter(c => c !== 'crew-link'), 'crew-link'] : channels.filter(c => c !== 'crew-link') },
+          () => e.target.checked ? 'Crew Link can now use this link.' : 'Crew Link channel closed.') }), crewLinkOn ? 'On' : 'Off')))
+
   const network = h(NetworkPanel, { api, peers, disabled })
 
   const events = data?.events || []
@@ -229,7 +252,7 @@ export default function RemoteAccessCrew() {
     error && h('div', { className: 'alert', role: 'alert' }, error),
     notice && h('div', { className: 'notice', role: 'status' }, notice),
     h('div', { className: 'grid' },
-      h('div', null, thisMachine, peerList, pairCard),
+      h('div', null, thisMachine, peerList, pairCard, streaming),
       h('div', null, network, sendCard, activity)))
 }
 

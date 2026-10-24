@@ -56,6 +56,8 @@ New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 Copy-Item $rac, $bridgeSrc -Destination $Dest -Force
 $icon = @((Join-Path $Source 'remote-access-crew.ico'), (Join-Path $Source '..\assets\remote-access-crew.ico')) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($icon) { Copy-Item $icon -Destination $Dest -Force }
+$hostLink = @((Join-Path $Source 'host-moonlight-link.ps1'), (Join-Path $PSScriptRoot 'host-moonlight-link.ps1')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($hostLink) { Copy-Item $hostLink -Destination $Dest -Force }
 
 # Put rac on the user PATH (once).
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -89,6 +91,7 @@ if (-not $NoCrewApp -and (Test-Path $crewApps) -and $appSrc) {
   Copy-Item $appSrc -Destination $stage -Recurse
   New-Item -ItemType Directory -Force -Path (Join-Path $stage 'bin') | Out-Null
   Copy-Item (Join-Path $Dest 'remote-access-crew.exe'), (Join-Path $Dest 'rac.exe') -Destination (Join-Path $stage 'bin') -Force
+  if ($hostLink) { Copy-Item $hostLink -Destination (Join-Path $stage 'bin') -Force }
   $cc = Get-Command codexcrew -ErrorAction SilentlyContinue
   if ($cc) {
     & $cc.Source app install $stage

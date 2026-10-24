@@ -19,7 +19,8 @@ ALLOWED = {
     'pair_cancel': set(),
     'pair': {'addr', 'code'},
     'send': {'peer', 'text', 'image_png_b64', 'paths'},
-    'set': {'autosync', 'peer', 'receive_dir'},
+    'set': {'autosync', 'peer', 'receive_dir', 'moonlight_link', 'channels'},
+    'host_app_title': set(),
     'unpair': {'peer'},
     'ping': {'peer'},
     'wifi': {'scan'},
@@ -103,6 +104,35 @@ def ensure_running(log_dir: Path) -> str:
             subprocess.Popen([str(exe)], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                              start_new_session=True, close_fds=True, cwd=str(APP_DIR))
     return 'started'
+
+
+SUNSHINE_STATE = Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'Sunshine' / 'config' / 'sunshine_state.json'
+
+
+def host_link_script() -> Path | None:
+    for p in (APP_DIR / 'bin' / 'host-moonlight-link.ps1',
+              Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs' / 'RemoteAccessCrew' / 'host-moonlight-link.ps1'):
+        if p.is_file():
+            return p
+    return None
+
+
+def host_link_setup(remove: bool = False) -> str:
+    """Run the host setup script hidden. Windows shows its own approval prompt once,
+    because publishing the identity edits Sunshine's app list and restarts Sunshine."""
+    if os.name != 'nt':
+        raise BridgeError('Publishing to Sunshine is a Windows host step.')
+    script = host_link_script()
+    if script is None:
+        raise BridgeError('host-moonlight-link.ps1 is missing; reinstall Remote Access Crew.')
+    args = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script)]
+    if remove:
+        args.append('-Remove')
+    done = subprocess.run(args, capture_output=True, text=True, timeout=300, creationflags=0x08000000)
+    out = (done.stdout or '').strip().splitlines()
+    if done.returncode != 0:
+        raise BridgeError(((done.stderr or '').strip().splitlines() or ['Sunshine update failed'])[-1])
+    return out[-1] if out else 'Done.'
 
 
 if __name__ == '__main__':
