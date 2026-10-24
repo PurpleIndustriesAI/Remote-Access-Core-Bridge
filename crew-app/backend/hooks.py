@@ -84,8 +84,10 @@ def routes(ctx):
         except ValueError as exc:
             return web.json_response({'error': 'Invalid request: ' + str(exc)}, status=400)
 
-    names = {'pair_code': 'pair-code', 'pair_cancel': 'pair-cancel', 'host_app_title': 'host-app-title'}
+    names = {'pair_code': 'pair-code', 'pair_cancel': 'pair-cancel', 'host_app_title': 'host-app-title',
+             'access_decision': 'access-decision', 'request_access': 'request-access'}
     return [AppRoute('GET', '/rac/status', operation('status')), AppRoute('POST', '/rac/host-link', host_link)] + [
         AppRoute('POST', '/rac/' + names.get(c, c), operation(c))
-        for c in ('pair_code', 'pair_cancel', 'pair', 'send', 'set', 'unpair', 'ping', 'wifi', 'probe', 'speedtest', 'host_app_title')
+        for c in ('pair_code', 'pair_cancel', 'pair', 'send', 'set', 'unpair', 'ping', 'wifi', 'probe', 'speedtest', 'host_app_title',
+                  'permissions', 'access_decision', 'request_access')
     ]

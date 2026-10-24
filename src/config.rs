@@ -27,6 +27,41 @@ impl Permissions {
             _ => false,
         }
     }
+
+    /// Whether one named capability ("clipboard" or "files") is granted.
+    pub fn has(&self, capability: &str) -> bool {
+        match capability {
+            "clipboard" => self.clipboard,
+            "files" => self.files,
+            _ => false,
+        }
+    }
+
+    pub fn set(&mut self, capability: &str, allowed: bool) -> Result<()> {
+        match capability {
+            "clipboard" => self.clipboard = allowed,
+            "files" => self.files = allowed,
+            _ => bail!("unknown capability '{capability}'; use clipboard or files"),
+        }
+        Ok(())
+    }
+}
+
+/// Validate a requested capability list: clipboard and/or files, no repeats.
+pub fn capabilities(list: &[String]) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for c in list {
+        if c != "clipboard" && c != "files" {
+            bail!("unknown capability '{c}'; use clipboard or files");
+        }
+        if !out.contains(c) {
+            out.push(c.clone());
+        }
+    }
+    if out.is_empty() {
+        bail!("ask for clipboard, files, or both");
+    }
+    Ok(out)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,6 +93,24 @@ mod consent_tests {
         assert!(!peer.permissions.allows("files"));
         assert!(!Permissions { clipboard:true, files:true }.allows("commands"));
     }
+
+    #[test]
+    fn capability_lists_are_validated() {
+        let ok = capabilities(&["files".into(), "clipboard".into(), "files".into()]).unwrap();
+        assert_eq!(ok, vec!["files".to_string(), "clipboard".to_string()]);
+        assert!(capabilities(&[]).is_err());
+        assert!(capabilities(&["commands".into()]).is_err());
+        let mut p = Permissions::default();
+        p.set("files", true).unwrap();
+        assert!(p.has("files") && !p.has("clipboard"));
+        assert!(p.set("admin", true).is_err());
+    }
+
+    #[test]
+    fn older_settings_allow_access_requests() {
+        let s: Settings = serde_json::from_str(r#"{"port":48765}"#).unwrap();
+        assert!(s.allow_access_requests);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,6 +133,8 @@ pub struct Settings {
     pub channels: Vec<String>,
     /// Hard ceiling on one received channel file.
     pub max_channel_bytes: u64,
+    /// Let paired devices ask for clipboard and file access. Off refuses every request.
+    pub allow_access_requests: bool,
 }
 
 /// Channel names are short lowercase words so they are safe as folder names.
@@ -108,6 +163,7 @@ impl Default for Settings {
             moonlight_link: None,
             channels: Vec::new(),
             max_channel_bytes: 64 * 1024 * 1024,
+            allow_access_requests: true,
         }
     }
 }

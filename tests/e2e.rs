@@ -178,3 +178,63 @@ async fn pair_send_and_reject() {
     assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A client asks the host for access; the host owner approves, and the host setting can refuse requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn access_request_flow() {
+    let root = std::env::temp_dir().join(format!("rac-access-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    // Owner notifications go to a fake Crew home, never the real one.
+    let crew = root.join("crew");
+    std::fs::create_dir_all(crew.join("apps/notification-bridge/data")).unwrap();
+    unsafe { std::env::set_var("CODEXCREW_HOME", &crew) };
+    // Offset by 5 so a parallel test using the same block never shares a port.
+    let base = free_base() + 5;
+    let host = node_dir(&root, "host", base + 10);
+    let client = node_dir(&root, "client", base + 20);
+    for d in [&host, &client] {
+        start(d);
+        wait_up(d).await;
+    }
+    let code = call(&host, json!({"cmd": "pair_code"})).await.unwrap()["code"].as_str().unwrap().to_string();
+    let host_fp = call(&client, json!({"cmd": "pair", "addr": format!("127.0.0.1:{}", base + 10), "code": code})).await.unwrap()["fingerprint"].as_str().unwrap().to_string();
+    let client_fp = call(&host, json!({"cmd": "status"})).await.unwrap()["peers"][0]["fingerprint"].as_str().unwrap().to_string();
+
+    // Invalid capability lists are refused before anything is sent or granted.
+    assert!(call(&client, json!({"cmd": "request_access", "peer": host_fp, "capabilities": ["admin"]})).await.is_err());
+    assert!(!config::load_state(&client).unwrap().peers[0].permissions.clipboard);
+
+    // Requests off: refused, and the host records nothing pending.
+    call(&host, json!({"cmd": "set", "allow_access_requests": false})).await.unwrap();
+    let err = call(&client, json!({"cmd": "request_access", "peer": host_fp, "capabilities": ["clipboard", "files"]})).await.unwrap_err();
+    assert!(format!("{err:#}").contains("not accepting access requests"), "{err:#}");
+    assert!(call(&host, json!({"cmd": "status"})).await.unwrap()["access_requests"].as_array().unwrap().is_empty());
+
+    // Requests on: pending until the owner decides; a request alone grants nothing.
+    call(&host, json!({"cmd": "set", "allow_access_requests": true})).await.unwrap();
+    call(&client, json!({"cmd": "request_access", "peer": host_fp, "capabilities": ["clipboard", "files"]})).await.unwrap();
+    let st = call(&host, json!({"cmd": "status"})).await.unwrap();
+    assert_eq!(st["access_requests"][0]["peer"], client_fp.as_str());
+    assert_eq!(st["access_requests"][0]["capabilities"], json!(["clipboard", "files"]));
+    assert_eq!(st["peers"][0]["permissions"]["clipboard"], false);
+    let r = call(&client, json!({"cmd": "send", "text": "before approval"})).await.unwrap();
+    assert_eq!(r["results"][0]["ok"], false, "{r}");
+    let inbox = std::fs::read_to_string(crew.join("apps/notification-bridge/data/inbox.jsonl")).unwrap();
+    assert_eq!(inbox.lines().count(), 1);
+    assert!(inbox.contains("remote-access-crew.access-requests") && inbox.contains("clipboard and files"), "{inbox}");
+
+    // Deny clears it; a second request comes back; approve grants exactly what was asked.
+    call(&host, json!({"cmd": "access_decision", "peer": client_fp, "approve": false})).await.unwrap();
+    assert!(call(&host, json!({"cmd": "access_decision", "peer": client_fp, "approve": true})).await.is_err());
+    call(&client, json!({"cmd": "request_access", "peer": host_fp, "capabilities": ["clipboard"]})).await.unwrap();
+    call(&host, json!({"cmd": "access_decision", "peer": client_fp, "approve": true})).await.unwrap();
+    let p = &config::load_state(&host).unwrap().peers[0].permissions;
+    assert!(p.clipboard && !p.files);
+    // Both directions now work for the clipboard.
+    call(&client, json!({"cmd": "send", "text": "after approval"})).await.unwrap();
+    call(&host, json!({"cmd": "send", "peer": client_fp, "text": "reply"})).await.unwrap();
+    // Asking again for something already granted is a no-op.
+    call(&client, json!({"cmd": "request_access", "peer": host_fp, "capabilities": ["clipboard"]})).await.unwrap();
+    assert!(call(&host, json!({"cmd": "status"})).await.unwrap()["access_requests"].as_array().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -173,11 +173,37 @@ export default function RemoteAccessCrew() {
         h('div', null, h('div', { className: 'name' }, p.name, / via Moonlight$/.test(p.name) && h('span', { className: 'chip ts', style: { marginLeft: 8 } }, 'Linked by Moonlight')), h('small', null, h('code', null, p.short_fingerprint))),
         h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: !!p.autosync, disabled, onChange: e => act('set', { autosync: e.target.checked, peer: p.fingerprint }) }), 'Sync')),
       h('div', { className: 'row', style: { margin: '6px 0' } }, ...p.addrs.slice(0, 4).map(a => h('span', { key: a, className: `chip ${isTs(a) ? 'ts' : ''}` }, `${isTs(a) ? 'Tailscale' : 'LAN'} ${a}`))),
+      h('div', { className: 'row', style: { margin: '6px 0' } },
+        ...['clipboard', 'files'].map(cap => h('label', { key: cap, className: 'switch' },
+          h('input', { type: 'checkbox', checked: !!p.permissions?.[cap], disabled, 'aria-label': `${cap === 'clipboard' ? 'Clipboard' : 'File'} access for ${p.name}`,
+            onChange: e => act('permissions', { peer: p.fingerprint, capability: cap, allowed: e.target.checked },
+              () => `${cap === 'clipboard' ? 'Clipboard (text and images)' : 'Files'} ${e.target.checked ? 'allowed' : 'blocked'} with ${p.name}.`) }),
+          cap === 'clipboard' ? 'Clipboard' : 'Files'))),
+      (!p.permissions?.clipboard || !p.permissions?.files) && h('small', null, 'Both machines must allow an exchange. Ask for access sends a request the other owner approves there.'),
       h('div', { className: 'row' },
         h('button', { disabled, onClick: () => act('ping', { peer: p.fingerprint }, () => `${p.name} is reachable and trusted.`) }, busy === 'ping' ? 'Testing…' : 'Test connection'),
+        h('button', { disabled, onClick: () => act('request-access', { peer: p.fingerprint, capabilities: ['clipboard', 'files'] }, () => `Asked ${p.name} for clipboard and file access. Its owner approves it there.`) }, busy === 'request-access' ? 'Asking…' : 'Ask for access'),
         confirmRemove === p.fingerprint
           ? h(React.Fragment, null, h('button', { className: 'danger', disabled, onClick: () => { setConfirmRemove(''); act('unpair', { peer: p.fingerprint }, () => `${p.name} removed. It can no longer connect.`) } }, 'Confirm remove'), h('button', { onClick: () => setConfirmRemove('') }, 'Keep'))
           : h('button', { className: 'danger', disabled, onClick: () => setConfirmRemove(p.fingerprint) }, 'Remove')))))
+
+  const requests = data?.access_requests || []
+  const requestsOn = data?.settings?.allow_access_requests !== false
+  const accessCard = h('div', { className: 'card' },
+    h('h2', null, 'Access requests'),
+    h('div', { className: 'row spread' },
+      h('div', null, h('div', { className: 'name' }, 'Allow access requests'),
+        h('small', null, requestsOn
+          ? 'On. Paired devices can ask for clipboard or file access. Nothing is granted until you approve it here.'
+          : 'Off. Requests from paired devices are refused. You can still allow a device with its switches above.')),
+      h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: requestsOn, disabled, 'aria-label': 'Allow access requests',
+        onChange: e => act('set', { allow_access_requests: e.target.checked }, () => e.target.checked ? 'Access requests on.' : 'Access requests off.') }), requestsOn ? 'On' : 'Off')),
+    !requests.length ? h('small', { style: { marginTop: 10 } }, 'No pending requests.') : requests.map(r => h('div', { key: r.peer, className: 'peer', role: 'alert' },
+      h('div', { className: 'name' }, `${r.name} asks for ${r.capabilities.join(' and ')} access`),
+      h('small', null, `Requested ${time(r.ts)}. Approving lasts until you revoke it.`),
+      h('div', { className: 'row', style: { marginTop: 8 } },
+        h('button', { className: 'primary', disabled, onClick: () => act('access-decision', { peer: r.peer, approve: true }, () => `${r.name} approved.`) }, 'Approve'),
+        h('button', { className: 'danger', disabled, onClick: () => act('access-decision', { peer: r.peer, approve: false }, () => `${r.name} denied.`) }, 'Deny')))))
 
   const pairCard = h('div', { className: 'card' },
     h('h2', null, 'Pair a device'),
@@ -252,7 +278,7 @@ export default function RemoteAccessCrew() {
     error && h('div', { className: 'alert', role: 'alert' }, error),
     notice && h('div', { className: 'notice', role: 'status' }, notice),
     h('div', { className: 'grid' },
-      h('div', null, thisMachine, peerList, pairCard, streaming),
+      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, streaming),
       h('div', null, network, sendCard, activity)))
 }
 

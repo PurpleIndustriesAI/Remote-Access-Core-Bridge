@@ -16,6 +16,14 @@ USAGE:
   rac ping PEER                   Check that a peer is reachable and still trusted
   rac sync on|off [--peer PEER]   Turn automatic clipboard sync on or off
   rac unpair PEER                 Forget a peer (it can no longer connect)
+  rac allow PEER clipboard|files on|off
+                                  Grant or revoke a paired device's clipboard or file access
+  rac request-access PEER [clipboard] [files]
+                                  Ask PEER's owner for access (default: both); this machine
+                                  allows the same exchange with PEER
+  rac approve PEER | rac deny PEER
+                                  Answer a pending access request from PEER
+  rac access-requests on|off      Let paired devices ask this machine for access
   rac net [--watch]               Wi-Fi signal, band, channel, and advice (--watch: live signal finder)
   rac probe PEER                  Latency and jitter to a peer
   rac speedtest PEER              Two-way throughput and a suggested Moonlight bitrate
@@ -85,9 +93,14 @@ fn real_main() -> Result<()> {
             println!("{} (v{}), identity {}", s["name"].as_str().unwrap_or("?"), s["version"].as_str().unwrap_or("?"), s["short_fingerprint"].as_str().unwrap_or("?"));
             println!("Reachable at: {}", list(&s["addrs"]));
             println!("Automatic sync: {}", on_off(&s["settings"]["autosync"]));
+            println!("Access requests: {}", on_off(&s["settings"]["allow_access_requests"]));
             println!("Peers:");
             for p in s["peers"].as_array().into_iter().flatten() {
-                println!("  {}  {}  sync {}  {}", p["name"].as_str().unwrap_or("?"), p["short_fingerprint"].as_str().unwrap_or(""), on_off(&p["autosync"]), list(&p["addrs"]));
+                println!("  {}  {}  sync {}  clipboard {}  files {}  {}", p["name"].as_str().unwrap_or("?"), p["short_fingerprint"].as_str().unwrap_or(""), on_off(&p["autosync"]),
+                    on_off(&p["permissions"]["clipboard"]), on_off(&p["permissions"]["files"]), list(&p["addrs"]));
+            }
+            for r in s["access_requests"].as_array().into_iter().flatten() {
+                println!("  PENDING: {} asks for {} access. Run: rac approve \"{}\"", r["name"].as_str().unwrap_or("?"), list(&r["capabilities"]).replace(", ", " and "), r["name"].as_str().unwrap_or("?"));
             }
             println!("Recent transfers:");
             for e in s["events"].as_array().into_iter().flatten().take(15) {
@@ -172,6 +185,44 @@ fn real_main() -> Result<()> {
             let fp = resolve_peer(args.get(1).context("missing peer")?)?;
             call(json!({"cmd": "unpair", "peer": fp}))?;
             println!("Peer removed.");
+            Ok(())
+        }
+        "allow" => {
+            let fp = resolve_peer(args.get(1).context("missing peer")?)?;
+            let capability = args.get(2).context("use: rac allow PEER clipboard|files on|off")?;
+            let allowed = match args.get(3).map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => bail!("use: rac allow PEER clipboard|files on|off"),
+            };
+            call(json!({"cmd": "permissions", "peer": fp, "capability": capability, "allowed": allowed}))?;
+            println!("{capability} access {}.", if allowed { "approved until revoked" } else { "revoked" });
+            Ok(())
+        }
+        "request-access" => {
+            let fp = resolve_peer(args.get(1).context("missing peer")?)?;
+            let mut caps: Vec<&str> = args[2..].iter().map(String::as_str).collect();
+            if caps.is_empty() {
+                caps = vec!["clipboard", "files"];
+            }
+            let r = call(json!({"cmd": "request_access", "peer": fp, "capabilities": caps}))?;
+            println!("Asked {} for {} access. Its owner approves or denies it there.", r["peer"].as_str().unwrap_or("?"), list(&r["requested"]).replace(", ", " and "));
+            Ok(())
+        }
+        "approve" | "deny" => {
+            let fp = resolve_peer(args.get(1).context("missing peer")?)?;
+            call(json!({"cmd": "access_decision", "peer": fp, "approve": cmd == "approve"}))?;
+            println!("Request {}.", if cmd == "approve" { "approved" } else { "denied" });
+            Ok(())
+        }
+        "access-requests" => {
+            let on = match args.get(1).map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => bail!("use: rac access-requests on|off"),
+            };
+            call(json!({"cmd": "set", "allow_access_requests": on}))?;
+            println!("Access requests {}.", if on { "on" } else { "off" });
             Ok(())
         }
         "net" => {

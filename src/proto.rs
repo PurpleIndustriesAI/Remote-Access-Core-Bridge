@@ -35,6 +35,9 @@ pub enum Msg {
     MoonlightLink { moonlight_cert: String, sig: String, name: String, addrs: Vec<String> },
     /// One file for an app channel such as Crew Link. It never touches the clipboard.
     Channel { channel: String, name: String, len: u64, sha256: String },
+    /// A paired device asks this machine's owner for clipboard and/or file access.
+    /// It never grants anything by itself; the owner approves or denies locally.
+    AccessRequest { capabilities: Vec<String> },
 }
 
 pub const MAX_ECHO: u32 = 200;

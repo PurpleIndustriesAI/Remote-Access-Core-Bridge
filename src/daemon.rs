@@ -23,6 +23,16 @@ const PAIR_ATTEMPTS: u32 = 5;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const COPY_BUF: usize = 256 * 1024;
+/// An unanswered access request expires after this long.
+const REQUEST_TTL: Duration = Duration::from_secs(30 * 60);
+/// A repeated request toasts the owner again only after this long.
+const REQUEST_RENOTIFY: Duration = Duration::from_secs(120);
+
+struct AccessAsk {
+    capabilities: Vec<String>,
+    at: Instant,
+    ts: u64,
+}
 
 pub struct Options {
     pub dir: PathBuf,
@@ -62,6 +72,8 @@ pub struct Node {
     send_lock: tokio::sync::Mutex<()>,
     token: String,
     link_limiter: moonlight::Limiter,
+    /// Pending access requests by peer fingerprint. Only paired peers can add one.
+    requests: Mutex<std::collections::HashMap<String, AccessAsk>>,
 }
 
 fn now() -> u64 {
@@ -153,6 +165,7 @@ pub async fn run(opts: Options) -> Result<()> {
         send_lock: tokio::sync::Mutex::new(()),
         token,
         link_limiter: moonlight::Limiter::default(),
+        requests: Mutex::new(Default::default()),
     });
     node.sync_trust();
     eprintln!("[rac] Remote Access Core (Bridge) {} listening on port {port}; identity {}", env!("CARGO_PKG_VERSION"), short_fingerprint(&node.id.fingerprint));
@@ -341,6 +354,31 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
     match msg {
         Msg::Ping => Ok(()),
         Msg::Pair { .. } | Msg::MoonlightLink { .. } => unreachable!(),
+        Msg::AccessRequest { capabilities } => {
+            if !settings.allow_access_requests {
+                node.event("in", peer, "access-request", 0, false, "refused: access requests are off");
+                bail!("{} is not accepting access requests; its owner can approve this device in Remote Access Core (Bridge)", node.name);
+            }
+            let wanted = config::capabilities(&capabilities)?;
+            let have = node.peer(fp).context("peer is no longer paired")?.permissions;
+            let missing: Vec<String> = wanted.into_iter().filter(|c| !have.has(c)).collect();
+            if missing.is_empty() {
+                node.event("in", peer, "access-request", 0, true, "already approved");
+                return Ok(());
+            }
+            let notify = {
+                let mut q = node.requests.lock().unwrap();
+                let repeat = q.get(fp).is_some_and(|p| p.capabilities == missing && p.at.elapsed() < REQUEST_RENOTIFY);
+                q.insert(fp.to_string(), AccessAsk { capabilities: missing.clone(), at: Instant::now(), ts: now() });
+                !repeat
+            };
+            let what = missing.join(" and ");
+            node.event("in", peer, "access-request", 0, true, format!("asks for {what} access; approve or deny on this machine"));
+            if notify {
+                notify_owner(&node.name, peer, fp, &what);
+            }
+            Ok(())
+        }
         Msg::Channel { channel, name, len, sha256 } => {
             let r = receive_channel(node, s, &settings, fp, &channel, &name, len, &sha256).await;
             match &r {
@@ -424,6 +462,40 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
             }
         }
     }
+}
+
+/// Toast the owner through Crew's Notification Bridge when it is installed. Best effort:
+/// the request is also in the activity list, the Crew page and `rac status`.
+fn notify_owner(host: &str, peer: &str, fp: &str, what: &str) {
+    let base = std::env::var_os("CODEXCREW_HOME").map(PathBuf::from).or_else(|| {
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".codex-crew"))
+    });
+    let Some(dir) = base.map(|b| b.join("apps").join("notification-bridge").join("data")) else { return };
+    if !dir.is_dir() {
+        return;
+    }
+    let note = json!({
+        "desktop_route": "notification-bridge",
+        "channel": "remote-access-crew.access-requests",
+        "group_key": format!("{}-{}", &fp[..fp.len().min(16)], now()),
+        "title": format!("{peer} asks for {what} access"),
+        "body": format!("Remote Access Core (Bridge) on {host}. Approve or deny on the Remote Access Core page, or run: rac approve \"{peer}\""),
+        "app": "remote-access-crew",
+    });
+    let line = format!("{note}\n");
+    let r = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("inbox.jsonl")).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+    if let Err(e) = r {
+        eprintln!("[rac] could not queue the access request notification: {e}");
+    }
+}
+
+/// Unexpired pending requests for status output.
+fn pending_requests(node: &Node) -> Vec<Value> {
+    let mut q = node.requests.lock().unwrap();
+    q.retain(|_, a| a.at.elapsed() < REQUEST_TTL);
+    q.iter()
+        .map(|(fp, a)| json!({"peer": fp, "name": node.peer_name(fp), "capabilities": a.capabilities, "ts": a.ts}))
+        .collect()
 }
 
 async fn apply(node: &Node, c: Content) -> Result<()> {
@@ -1108,7 +1180,37 @@ fn status(node: &Node) -> Value {
         })).collect::<Vec<_>>(),
         "pairing": pair,
         "events": events,
+        "access_requests": pending_requests(node),
     })
+}
+
+/// Grant or revoke capabilities for one peer, saved before it takes effect.
+fn grant(node: &Node, fp: &str, capabilities: &[String], allowed: bool) -> Result<()> {
+    {
+        let mut state = node.state.lock().unwrap();
+        let mut next = state.clone();
+        let peer = next.peers.iter_mut().find(|p| p.fingerprint == fp).context("unknown peer")?;
+        for c in capabilities {
+            peer.permissions.set(c, allowed)?;
+        }
+        // Persist before publishing a grant. A failed write must not
+        // silently grant access in memory.
+        config::save_state(&node.dir, &next)?;
+        *state = next;
+    }
+    if allowed {
+        // A grant answers any matching pending request.
+        let mut q = node.requests.lock().unwrap();
+        if let Some(a) = q.get_mut(fp) {
+            a.capabilities.retain(|c| !capabilities.contains(c));
+            if a.capabilities.is_empty() {
+                q.remove(fp);
+            }
+        }
+    }
+    node.event("local", &node.peer_name(fp), "permission", 0, true,
+        format!("{}: {}", capabilities.join(" and "), if allowed { "approved until revoked" } else { "revoked" }));
+    Ok(())
 }
 
 fn str_arg<'a>(req: &'a Value, k: &str) -> Result<&'a str> {
@@ -1122,23 +1224,35 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
             let fp = str_arg(req, "peer")?;
             let capability = str_arg(req, "capability")?;
             let allowed = req.get("allowed").and_then(Value::as_bool).context("missing boolean 'allowed'")?;
-            {
-                let mut state = node.state.lock().unwrap();
-                let mut next = state.clone();
-                let peer = next.peers.iter_mut().find(|p| p.fingerprint == fp).context("unknown peer")?;
-                match capability {
-                    "clipboard" => peer.permissions.clipboard = allowed,
-                    "files" => peer.permissions.files = allowed,
-                    _ => bail!("unknown capability"),
-                }
-                // Persist before publishing a grant. A failed write must not
-                // silently grant access in memory.
-                config::save_state(&node.dir, &next)?;
-                *state = next;
-            }
-            node.event("local", &node.peer_name(fp), "permission", 0, true,
-                format!("{capability}: {}", if allowed { "approved until revoked" } else { "revoked" }));
+            grant(node, fp, &[capability.to_string()], allowed)?;
             Ok(status(node))
+        }
+        "access_decision" => {
+            let fp = str_arg(req, "peer")?;
+            let approve = req.get("approve").and_then(Value::as_bool).context("missing boolean 'approve'")?;
+            let ask = node.requests.lock().unwrap().remove(fp).filter(|a| a.at.elapsed() < REQUEST_TTL).context("no pending request from that device")?;
+            if approve {
+                grant(node, fp, &ask.capabilities, true)?;
+            } else {
+                node.event("local", &node.peer_name(fp), "access-request", 0, true, format!("denied {}", ask.capabilities.join(" and ")));
+            }
+            Ok(status(node))
+        }
+        "request_access" => {
+            let fp = str_arg(req, "peer")?;
+            let list: Vec<String> = req.get("capabilities").and_then(Value::as_array).context("missing 'capabilities'")?
+                .iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            let caps = config::capabilities(&list)?;
+            let peer = node.peer(fp).context("unknown peer")?;
+            // Asking is this owner's consent for the same exchange in both directions.
+            grant(node, fp, &caps, true)?;
+            let r = deliver(node, &peer, &Outgoing { msg: Msg::AccessRequest { capabilities: caps.clone() }, body: Body::None, bytes: 0 }).await;
+            match &r {
+                Ok(()) => node.event("out", &peer.name, "access-request", 0, true, format!("asked for {}; waiting for its owner", caps.join(" and "))),
+                Err(e) => node.event("out", &peer.name, "access-request", 0, false, format!("{e:#}")),
+            }
+            r?;
+            Ok(json!({"peer": peer.name, "requested": caps}))
         }
         "pair_code" => {
             let code = proto::new_pair_code();
@@ -1199,6 +1313,9 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
                         moonlight::sunshine_clients(&p).context("Moonlight link needs a readable sunshine_state.json")?;
                         Some(p)
                     };
+                }
+                if let Some(b) = req.get("allow_access_requests").and_then(|v| v.as_bool()) {
+                    st.settings.allow_access_requests = b;
                 }
                 if let Some(arr) = req.get("channels").and_then(|v| v.as_array()) {
                     let list: Vec<String> = arr.iter().filter_map(|v| v.as_str()).map(String::from).collect();

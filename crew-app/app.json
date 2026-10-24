@@ -1,7 +1,7 @@
 {
   "name": "remote-access-crew",
   "displayName": "Remote Access Core (Bridge)",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Copy on one machine, paste on the other: secure two-way text, image, and file sharing over LAN or Tailscale.",
   "author": "Purple Industries",
   "license": "Proprietary",
