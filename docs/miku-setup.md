@@ -17,8 +17,12 @@ Run in a normal (not Administrator) terminal unless a step says otherwise.
 
 1. Pull this branch (`feat/rac-access-requests`) and build:
    `cargo build --release`. Check `target/release/rac version` prints `rac 0.4.0`.
-2. Install. Windows: `powershell -ExecutionPolicy Bypass -File .\install\install.ps1`.
-   Linux: `./install/install.sh`. This replaces the binaries and keeps the pairing in
+2. Install. MIKU runs the bridge inside the Remote Access Suite (`RAC_HOME` is
+   `%USERPROFILE%\.remote-access-crew`), so update it with the suite package. `install.ps1`
+   refuses to run there, because its shortcuts would start a second bridge with a second
+   identity and break the pairing. Machines without the suite:
+   `powershell -ExecutionPolicy Bypass -File .\install\install.ps1` (Windows) or
+   `./install/install.sh` (Linux). This replaces the binaries and keeps the pairing in
    `%APPDATA%\RemoteAccessCrew` or `~/.config/remote-access-crew`.
 3. Open the firewall once. Windows, elevated PowerShell:
    `powershell -ExecutionPolicy Bypass -File .\install\install.ps1 -Firewall`.

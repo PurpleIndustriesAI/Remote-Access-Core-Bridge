@@ -43,7 +43,20 @@ if ($Firewall) {
     -Direction Inbound -Action Allow -Program $Bridge -Protocol TCP -LocalPort 48765 `
     -RemoteAddress @('LocalSubnet', '100.64.0.0/10', 'fd7a:115c:a1e0::/48') -Profile Any | Out-Null
   Write-Host "Firewall rule added: TCP 48765 from LocalSubnet and Tailscale only."
+  # Admin-only home for the elevated half of host-moonlight-link.ps1 (inherits Program Files ACLs).
+  $adminDir = Join-Path $env:ProgramFiles 'RemoteAccessCore'
+  New-Item -ItemType Directory -Force -Path $adminDir | Out-Null
+  Copy-Item (Join-Path $PSScriptRoot 'rac-sunshine-app.ps1') -Destination $adminDir -Force
+  Write-Host "Moonlight link helper installed to $adminDir."
   return
+}
+
+# The Remote Access Suite runs its own bridge copy with RAC_HOME (default %USERPROFILE%\.remote-access-crew)
+# and checks that copy's hash. Shortcuts made here would start a second bridge with a second identity
+# under %APPDATA%, which breaks the pairing, so the suite's own package must update it instead.
+$suiteHome = if ($env:RAC_HOME) { $env:RAC_HOME } else { Join-Path $env:USERPROFILE '.remote-access-crew' }
+if (Test-Path -LiteralPath $suiteHome) {
+  throw "The Remote Access Suite manages this bridge (state in $suiteHome). Update it with the suite package, not install.ps1."
 }
 
 $rac = Find-Binary 'rac.exe'
