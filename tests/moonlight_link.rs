@@ -153,7 +153,8 @@ async fn moonlight_link_and_channels() {
     std::fs::write(&env, br#"{"signed":"envelope"}"#).unwrap();
     let r = call(&client, json!({"cmd": "channel_send", "peer": host_fp, "channel": "crew-link", "path": env})).await.unwrap();
     assert_eq!(r["bytes"], json!(21));
-    let inbox = config::channel_inbox(&host, "crew-link").unwrap();
+    // Files land in a folder named for the sender, proven by its TLS certificate.
+    let inbox = config::channel_inbox(&host, "crew-link").unwrap().join(&client_fp);
     assert_eq!(std::fs::read(inbox.join("envelope.json")).unwrap(), br#"{"signed":"envelope"}"#);
     assert!(!host.join("inbox").join("envelope.json").exists());
     // A channel the receiver did not enable is refused.
@@ -163,7 +164,7 @@ async fn moonlight_link_and_channels() {
     assert!(call(&client, json!({"cmd": "channel_send", "peer": host_fp, "channel": "../x", "path": env})).await.is_err());
     // Host to client works the same way.
     call(&host, json!({"cmd": "channel_send", "peer": client_fp, "channel": "crew-link", "path": env})).await.unwrap();
-    assert!(config::channel_inbox(&client, "crew-link").unwrap().join("envelope.json").exists());
+    assert!(config::channel_inbox(&client, "crew-link").unwrap().join(&host_fp).join("envelope.json").exists());
 
     // Turning Moonlight link off closes the door for new unknown certificates.
     call(&host, json!({"cmd": "set", "moonlight_link": ""})).await.unwrap();

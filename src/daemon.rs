@@ -339,7 +339,7 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
         Msg::Ping => Ok(()),
         Msg::Pair { .. } | Msg::MoonlightLink { .. } => unreachable!(),
         Msg::Channel { channel, name, len, sha256 } => {
-            let r = receive_channel(node, s, &settings, &channel, &name, len, &sha256).await;
+            let r = receive_channel(node, s, &settings, fp, &channel, &name, len, &sha256).await;
             match &r {
                 Ok(p) => node.event("in", peer, &format!("channel:{channel}"), len, true, format!("saved {}", p.display())),
                 Err(e) => node.event("in", peer, &format!("channel:{channel}"), len, false, format!("{e:#}")),
@@ -524,7 +524,7 @@ async fn receive_files<R: AsyncRead + Unpin>(node: &Node, r: &mut R, files: Vec<
 
 /// Save one channel file into `<home>/channels/<channel>/inbox`. Only channels the owner
 /// enabled are accepted; the file is verified before it appears under its final name.
-async fn receive_channel<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, r: &mut S, st: &config::Settings, channel: &str, name: &str, len: u64, sha256: &str) -> Result<PathBuf> {
+async fn receive_channel<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, r: &mut S, st: &config::Settings, sender_fp: &str, channel: &str, name: &str, len: u64, sha256: &str) -> Result<PathBuf> {
     let check = || -> Result<String> {
         if !st.channels.iter().any(|c| c == channel) {
             bail!("channel '{channel}' is not enabled on this machine");
@@ -550,7 +550,8 @@ async fn receive_channel<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, r: &mut
             return Err(e);
         }
     };
-    let inbox = config::channel_inbox(&node.dir, channel)?;
+    // One folder per sender: the name is the sender's certificate fingerprint, proven by TLS.
+    let inbox = config::channel_inbox(&node.dir, channel)?.join(sender_fp);
     tokio::fs::create_dir_all(&inbox).await?;
     let dest = proto::unique_child(&inbox, &seg);
     let part = part_path(&dest);

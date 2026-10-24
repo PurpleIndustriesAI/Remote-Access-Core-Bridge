@@ -22,7 +22,7 @@ and the Crew page at `/apps/remote-access-crew` control the bridge on this machi
   code. Publishing the identity to Sunshine needs `host-moonlight-link.ps1`, which asks
   Windows for approval once and restarts Sunshine; never run it while a stream is live.
 - `rac channel on|off NAME`, `rac channel-send --to PEER --channel NAME FILE`: verified
-  single-file delivery for apps such as Crew Link, into `<home>/channels/NAME/inbox`.
+  single-file delivery for apps such as Crew Link, into `<home>/channels/NAME/inbox/<sender fingerprint>`.
 
 ## Rules
 
