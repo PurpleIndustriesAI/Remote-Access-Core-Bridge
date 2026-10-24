@@ -124,7 +124,7 @@ def host_link_setup(remove: bool = False) -> str:
         raise BridgeError('Publishing to Sunshine is a Windows host step.')
     script = host_link_script()
     if script is None:
-        raise BridgeError('host-moonlight-link.ps1 is missing; reinstall Remote Access Crew.')
+        raise BridgeError('host-moonlight-link.ps1 is missing; reinstall Remote Access Core (Bridge).')
     args = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script)]
     if remove:
         args.append('-Remove')

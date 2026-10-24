@@ -126,8 +126,9 @@ async fn moonlight_link_and_channels() {
     assert!(format!("{err:#}").contains("not paired with the host's Sunshine"), "{err:#}");
 
     // An unknown certificate admitted only for linking cannot send clipboard data.
+    // The intruder grants itself approval locally; only the host's own trust decides.
     let mut st = config::load_state(&other).unwrap();
-    st.peers.push(config::Peer { name: "host".into(), fingerprint: host_fp.clone(), addrs: vec![host_addr.clone()], autosync: true, paired_at: 0, permissions: Default::default() });
+    st.peers.push(config::Peer { name: "host".into(), fingerprint: host_fp.clone(), addrs: vec![host_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard: true, files: true } });
     config::save_state(&other, &st).unwrap();
     let other2 = node_dir(&root, "other2", base + 50, |_| {});
     let mut st2 = config::load_state(&other2).unwrap();
@@ -172,5 +173,9 @@ async fn moonlight_link_and_channels() {
     assert!(!format!("{err:#}").is_empty());
     // Already-linked peers keep working.
     call(&client, json!({"cmd": "send", "text": "still linked"})).await.unwrap();
+    // The host can still revoke a linked client's approval, like any other peer's.
+    call(&host, json!({"cmd": "permissions", "peer": client_fp, "capability": "clipboard", "allowed": false})).await.unwrap();
+    let r = call(&client, json!({"cmd": "send", "text": "after revoke"})).await.unwrap();
+    assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
     let _ = std::fs::remove_dir_all(&root);
 }

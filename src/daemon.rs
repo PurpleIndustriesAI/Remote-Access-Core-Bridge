@@ -984,7 +984,7 @@ async fn moonlight_link_with(node: &Node, target: &str, host_fp: &str, cert: &st
         .await?
         .context("the host's bridge did not prove the identity Sunshine published, or Moonlight link is off there")?;
     // TLS 1.3 reports a refused client certificate only after the handshake, on first I/O.
-    const REFUSED: &str = "the host refused this link; turn on Moonlight link in Remote Access Crew (Host)";
+    const REFUSED: &str = "the host refused this link; turn on Moonlight link in Remote Access Core (Host)";
     let msg = Msg::MoonlightLink { moonlight_cert: cert.to_string(), sig: sig.to_string(), name: node.name.clone(), addrs: net::local_addrs(node.port()) };
     proto::write_json(&mut t, &msg).await.context(REFUSED)?;
     let reply: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut t)).await?.context(REFUSED)?;

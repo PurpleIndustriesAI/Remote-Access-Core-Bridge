@@ -9,7 +9,7 @@
      sunshine_state.json).
   2. Publishes this bridge's certificate fingerprint as a Sunshine app titled "RAC:<fp>".
      Moonlight fetches the app list over HTTPS pinned to Sunshine's certificate, so the
-     client learns the real fingerprint and pins it. The Remote Access Crew client hides it.
+     client learns the real fingerprint and pins it. The Remote Access Core (Client) viewer hides it.
   Step 2 edits Sunshine's apps.json and restarts Sunshine, which needs one UAC approval.
   It refuses to restart while a stream is live unless -Force is given.
 
@@ -51,7 +51,7 @@ if ($Elevated) {
 
 $rac = Get-Command rac -ErrorAction SilentlyContinue
 if (-not $rac) { $rac = Join-Path $env:LOCALAPPDATA 'Programs\RemoteAccessCrew\rac.exe' } else { $rac = $rac.Source }
-if (-not (Test-Path -LiteralPath $rac)) { throw "rac.exe not found. Install Remote Access Crew first (install.ps1)." }
+if (-not (Test-Path -LiteralPath $rac)) { throw "rac.exe not found. Install Remote Access Core (Bridge) first (install.ps1)." }
 
 $log = Join-Path $SunshineConfig 'sunshine.log'
 if (-not $Force -and (Test-Path -LiteralPath $log)) {
@@ -71,7 +71,7 @@ if ($Remove) {
   if ($title -notmatch '^RAC:[0-9a-f]{64}$') { throw "Unexpected host identity: $title" }
 }
 
-Write-Host 'Windows will ask for approval once: Remote Access Crew (Host) needs to update Sunshine''s app list and restart Sunshine.'
+Write-Host 'Windows will ask for approval once: Remote Access Core (Host) needs to update Sunshine''s app list and restart Sunshine.'
 $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated', '-SunshineConfig', "`"$SunshineConfig`"", '-ElevatedTitle', "`"$title`"")
 $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs -WindowStyle Hidden -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw "The Sunshine update did not complete (exit $($p.ExitCode))." }
