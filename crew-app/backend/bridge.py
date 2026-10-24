@@ -1,4 +1,4 @@
-"""Talk to the local Remote Access Crew bridge and keep it running.
+"""Talk to the local Remote Access Core (Bridge) and keep it running.
 
 The bridge is a separate native process so clipboard sync keeps working when Crew is closed.
 This module only proxies an allow-listed set of commands to its loopback control port."""
@@ -71,7 +71,7 @@ def call(cmd: str, body: dict | None = None, timeout: float = 60.0):
             s.sendall((json.dumps(req) + '\n').encode())
             line = s.makefile('rb').readline(64 * 1024 * 1024)
     except OSError as exc:
-        raise BridgeError('The Remote Access Crew bridge is not running.') from exc
+        raise BridgeError('The Remote Access Core (Bridge) is not running.') from exc
     reply = json.loads(line or b'{}')
     if not reply.get('ok'):
         raise BridgeError(reply.get('error') or 'request failed')

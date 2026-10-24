@@ -53,7 +53,7 @@ import javax.net.ssl.X509TrustManager;
 import javax.security.auth.x500.X500Principal;
 
 /**
- * The Remote Access Crew wire protocol, compatible with the desktop bridge (src/proto.rs, src/tls.rs):
+ * The Remote Access Core (Bridge) wire protocol, compatible with the desktop bridge (src/proto.rs, src/tls.rs):
  * mutual TLS 1.3 with pinned certificate fingerprints, 4-byte big-endian length-prefixed JSON headers,
  * raw bodies, and an HMAC pairing proof that binds both fingerprints.
  */

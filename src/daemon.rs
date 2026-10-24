@@ -145,7 +145,7 @@ pub async fn run(opts: Options) -> Result<()> {
         token,
     });
     node.sync_trust();
-    eprintln!("[rac] Remote Access Crew {} listening on port {port}; identity {}", env!("CARGO_PKG_VERSION"), short_fingerprint(&node.id.fingerprint));
+    eprintln!("[rac] Remote Access Core (Bridge) {} listening on port {port}; identity {}", env!("CARGO_PKG_VERSION"), short_fingerprint(&node.id.fingerprint));
 
     // Local clipboard changes -> peers.
     let n = node.clone();
@@ -1010,7 +1010,7 @@ pub async fn control_call(dir: &Path, req: Value) -> Result<Value> {
     req["token"] = Value::String(token.trim().to_string());
     let sock = TcpStream::connect(("127.0.0.1", state.settings.port + config::CONTROL_PORT_OFFSET))
         .await
-        .context("the Remote Access Crew bridge is not running")?;
+        .context("the Remote Access Core (Bridge) is not running")?;
     let (r, mut w) = sock.into_split();
     let mut s = req.to_string();
     s.push('\n');

@@ -38,7 +38,7 @@ public final class ShareActivity extends Activity {
                 else if (!uris.isEmpty()) o = Transfer.files(app.getContentResolver(), uris);
                 else throw new IllegalArgumentException("nothing to send");
                 int n = Transfer.sendAll(app, o);
-                result = n > 0 ? "Sent " + o.what + " to " + n + " computer(s)" : "Not sent. Open Remote Access Crew for details.";
+                result = n > 0 ? "Sent " + o.what + " to " + n + " computer(s)" : "Not sent. Open Remote Access Core (Bridge) for details.";
             } catch (Exception e) {
                 result = "Not sent: " + e.getMessage();
                 Transfer.log(result);

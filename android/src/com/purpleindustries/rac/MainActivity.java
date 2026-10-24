@@ -55,7 +55,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
 
-        TextView title = text("Remote Access Crew", 24, TEXT);
+        TextView title = text("Remote Access Core (Bridge)", 24, TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
         me = text("", 13, MUTED);
@@ -63,7 +63,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout send = panel("Copy and paste");
         send.addView(text("Copy something on the computer and it appears here while receiving is on. "
-                + "To send from this phone, share any text, picture or file to Remote Access Crew, or:", 14, MUTED));
+                + "To send from this phone, share any text, picture or file to Remote Access Core (Bridge), or:", 14, MUTED));
         send.addView(button("Send my clipboard to computers", v -> sendClipboard()));
         receive = new Switch(this);
         receive.setText("Receive from computers");

@@ -1,4 +1,4 @@
-# Builds the Remote Access Crew Android app with the SDK's own tools only (no Gradle, no downloads).
+# Builds the Remote Access Core (Bridge) Android app with the SDK's own tools only (no Gradle, no downloads).
 # Needs JDK 17+, Android SDK platform 36 and build-tools 35+. Signing key and password file come
 # from the environment and never live in the repository:
 #   RAC_ANDROID_KEYSTORE   path to the .jks keystore (alias "rac")

@@ -1,10 +1,14 @@
-<p align="center"><img src="assets/remote-access-crew.png" width="96" alt="Remote Access Crew logo"></p>
+<p align="center"><img src="assets/remote-access-crew.png" width="96" alt="Remote Access Core (Bridge) logo"></p>
 
-# Remote Access Crew
+# Remote Access Core (Bridge)
 
-Copy on one machine, paste on the other. Remote Access Crew syncs **text, images, and files**
+Copy on one machine, paste on the other. Remote Access Core (Bridge) syncs **text, images, and files**
 in both directions between your own Windows and Linux machines over your **LAN or Tailscale**,
 with mutual TLS and certificate pinning. It also ships as a Crew app.
+
+This app was called Remote Access Crew until 2026-10-24. Only shown names changed:
+binaries, `~/.remote-access-crew`, and the `Downloads/Remote Access Crew` folder keep their names,
+so existing pairings and received files stay where they are.
 
 ## What it does
 
@@ -29,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Firewall
 ```
 
-This adds **Remote Access Crew** to the Start Menu and to Startup, with its icon.
+This adds **Remote Access Core (Bridge)** to the Start Menu and to Startup, with its icon.
 
 **Linux**
 

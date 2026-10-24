@@ -1,6 +1,6 @@
 # Security model
 
-Remote Access Crew moves clipboard content between machines you own. Clipboard content
+Remote Access Core (Bridge) moves clipboard content between machines you own. Clipboard content
 often contains secrets, so the design assumes a hostile local network.
 
 ## Who can connect

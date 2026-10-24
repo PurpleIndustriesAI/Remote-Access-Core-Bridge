@@ -274,7 +274,7 @@ final class Transfer {
     private static void receiveText(Context ctx, InputStream in, long len, String peer) throws IOException {
         byte[] b = body(in, len, Rac.MAX_TEXT, "text");
         String text = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(b)).toString();
-        clip(ctx, ClipData.newPlainText("Remote Access Crew", text));
+        clip(ctx, ClipData.newPlainText("Remote Access Core (Bridge)", text));
         log("Text from " + peer + " copied (" + text.length() + " characters)");
     }
 
@@ -303,7 +303,7 @@ final class Transfer {
         v.clear();
         v.put(MediaStore.Images.Media.IS_PENDING, 0);
         cr.update(u, v, null, null);
-        clip(ctx, ClipData.newUri(cr, "Remote Access Crew image", u));
+        clip(ctx, ClipData.newUri(cr, "Remote Access Core (Bridge) image", u));
         log("Image from " + peer + " copied and saved to Pictures/" + FOLDER);
     }
 
@@ -364,7 +364,7 @@ final class Transfer {
         ContentValues done = new ContentValues();
         done.put(MediaStore.Downloads.IS_PENDING, 0);
         for (Uri u : written) cr.update(u, done, null, null);
-        clip(ctx, ClipData.newUri(cr, "Remote Access Crew file", written.get(0)));
+        clip(ctx, ClipData.newUri(cr, "Remote Access Core (Bridge) file", written.get(0)));
         log((count == 1 ? "File" : count + " files") + " from " + peer + " saved to Download/" + FOLDER + "/" + batch);
     }
 

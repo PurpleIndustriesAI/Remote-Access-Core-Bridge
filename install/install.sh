@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Remote Access Crew for the current Linux user (no root needed).
+# Install Remote Access Core (Bridge) for the current Linux user (no root needed).
 # Copies the binaries to ~/.local/bin, adds a launcher and autostart entry with the app icon,
 # installs the Crew app when Crew is present, and starts the bridge.
 set -eu
@@ -25,7 +25,7 @@ install -m 0644 "$(find_file remote-access-crew.png)" "$SHARE/icons/hicolor/256x
 
 DESKTOP="[Desktop Entry]
 Type=Application
-Name=Remote Access Crew
+Name=Remote Access Core (Bridge)
 Comment=Copy on one machine, paste on the other (LAN and Tailscale)
 Exec=$BIN/remote-access-crew
 Icon=remote-access-crew

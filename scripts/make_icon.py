@@ -1,4 +1,4 @@
-"""Render the Remote Access Crew logo (same geometry as assets/remote-access-crew.svg)
+"""Render the Remote Access Core (Bridge) logo (same geometry as assets/remote-access-crew.svg)
 into assets/remote-access-crew.ico and assets/remote-access-crew.png. Needs Pillow."""
 from pathlib import Path
 

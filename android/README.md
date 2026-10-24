@@ -1,4 +1,4 @@
-# Remote Access Crew for Android
+# Remote Access Core (Bridge) for Android
 
 The phone end of the clipboard and file bridge. It speaks the same protocol as the desktop
 bridge, so a phone pairs with a computer exactly like a second computer does.

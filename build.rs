@@ -1,5 +1,5 @@
 fn main() {
-    // Embed the app icon and version details so Windows shows "Remote Access Crew" with its logo.
+    // Embed the app icon and version details so Windows shows "Remote Access Core (Bridge)" with its logo.
     #[cfg(windows)]
     {
         println!("cargo:rerun-if-changed=assets/app.rc");

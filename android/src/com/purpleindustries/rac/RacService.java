@@ -57,7 +57,7 @@ public final class RacService extends Service {
         PendingIntent stop = PendingIntent.getService(this, 1, new Intent(this, RacService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle("Remote Access Crew is receiving")
+                .setContentTitle("Remote Access Core (Bridge) is receiving")
                 .setContentText("Paired computers can send text, images and files")
                 .setContentIntent(open)
                 .addAction(new Notification.Action.Builder(null, "Stop", stop).build())

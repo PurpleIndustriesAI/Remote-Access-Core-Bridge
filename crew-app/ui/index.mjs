@@ -144,7 +144,7 @@ export default function RemoteAccessCrew() {
 
   const header = h('header', null,
     h('div', { className: 'brand' }, h(Logo, { size: 34 }),
-      h('div', null, h('h1', null, 'Remote Access Crew'),
+      h('div', null, h('h1', null, 'Remote Access Core (Bridge)'),
         h('small', null, 'Copy on one machine, paste on the other. Text, images, and files over your LAN or Tailscale.'))),
     h('div', { className: 'row' },
       h('span', { className: `chip ${bridge === 'running' ? 'ok' : 'warn'}` }, bridge === 'running' ? 'Bridge running' : bridge === 'missing' ? 'Bridge not installed' : bridge === 'loading' ? 'Checking…' : 'Bridge stopped'),
@@ -155,7 +155,7 @@ export default function RemoteAccessCrew() {
   if (bridge === 'missing') {
     return h('main', { className: 'rac' }, h('style', null, css), header,
       h('div', { className: 'card' }, h('h2', null, 'Install the bridge'),
-        h('p', null, 'The Remote Access Crew bridge is not installed in this app yet. Run the app installer from the release (install.ps1 on Windows, install.sh on Linux), then reopen this page.')))
+        h('p', null, 'The Remote Access Core (Bridge) is not installed in this app yet. Run the app installer from the release (install.ps1 on Windows, install.sh on Linux), then reopen this page.')))
   }
 
   const thisMachine = h('div', { className: 'card' },
@@ -183,7 +183,7 @@ export default function RemoteAccessCrew() {
     h('h2', null, 'Pair a device'),
     pairing
       ? h(React.Fragment, null,
-        h('p', null, 'On the other machine, open Remote Access Crew and choose “Enter a code”, or run ', h('code', null, 'rac pair <address> <code>'), '.'),
+        h('p', null, 'On the other machine, open Remote Access Core (Bridge) and choose “Enter a code”, or run ', h('code', null, 'rac pair <address> <code>'), '.'),
         h('div', { className: 'code', 'aria-live': 'polite' }, pairing.code),
         h('small', null, `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}. One use. Five wrong attempts close it.`),
         h('div', { className: 'row', style: { margin: '8px 0' } }, ...(data.addrs || []).map(a => h('span', { key: a, className: `chip ${isTs(a) ? 'ts' : ''}` }, a))),

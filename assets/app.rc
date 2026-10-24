@@ -13,8 +13,8 @@ BEGIN
     BLOCK "040904b0"
     BEGIN
       VALUE "CompanyName", "Purple Industries"
-      VALUE "FileDescription", "Remote Access Crew"
-      VALUE "ProductName", "Remote Access Crew"
+      VALUE "FileDescription", "Remote Access Core (Bridge)"
+      VALUE "ProductName", "Remote Access Core (Bridge)"
       VALUE "FileVersion", "0.2.0"
       VALUE "ProductVersion", "0.2.0"
       VALUE "LegalCopyright", "Copyright (c) 2026 Purple Industries. All rights reserved."

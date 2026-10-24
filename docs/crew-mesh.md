@@ -19,19 +19,19 @@ GitHub accounts.
 | Clients | Official Tailscale apps, pointed at our server | `tailscale up --login-server https://mesh.<our-domain>` on desktop; "Use alternate server" on mobile |
 | Management | A Crew app page using Headscale's API | List and approve devices, issue pre-auth keys, edit ACLs |
 
-Remote Access Crew already accepts the Tailscale address ranges, and Headscale uses the same
+Remote Access Core (Bridge) already accepts the Tailscale address ranges, and Headscale uses the same
 default prefixes (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), so the bridge needs no changes.
 
 ## Phases
 
 1. **Lab:** run Headscale and an OIDC provider on one machine, join two test devices, and
-   verify login, MagicDNS, ACLs, and a Remote Access Crew transfer over the mesh.
+   verify login, MagicDNS, ACLs, and a Remote Access Core (Bridge) transfer over the mesh.
 2. **Hosted:** a small public VPS with a domain and TLS. Estimated about 5 to 12 USD per month,
    depending on provider and relay bandwidth. This is a billable change and needs owner approval.
 3. **Migration:** move the owner's devices from the hosted tailnet one at a time, keeping the
    hosted tailnet as a fallback until each device is verified.
 4. **Crew integration:** device list, approvals, keys, and ACL editing in Crew; a "Join Crew
-   Mesh" flow in the Remote Access Crew page.
+   Mesh" flow in the Remote Access Core (Bridge) page.
 
 ## Limits to accept
 

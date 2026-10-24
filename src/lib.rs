@@ -1,4 +1,4 @@
-//! Remote Access Crew: secure two-way clipboard, image, and file sharing between paired
+//! Remote Access Core (Bridge): secure two-way clipboard, image, and file sharing between paired
 //! machines over a LAN or Tailscale.
 
 pub mod clip;

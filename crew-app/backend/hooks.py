@@ -1,4 +1,4 @@
-"""Crew lifecycle and owner-only routes for Remote Access Crew."""
+"""Crew lifecycle and owner-only routes for Remote Access Core (Bridge)."""
 import asyncio
 import json
 from pathlib import Path

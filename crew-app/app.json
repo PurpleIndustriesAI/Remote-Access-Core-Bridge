@@ -1,6 +1,6 @@
 {
   "name": "remote-access-crew",
-  "displayName": "Remote Access Crew",
+  "displayName": "Remote Access Core (Bridge)",
   "version": "0.2.0",
   "description": "Copy on one machine, paste on the other: secure two-way text, image, and file sharing over LAN or Tailscale.",
   "author": "Purple Industries",
@@ -12,5 +12,5 @@
   "permissions": {"api": ["/api/apps/remote-access-crew/*"], "storage": true, "network": true, "memory": "app-scoped", "spawn": false, "cron": false},
   "skills": ["skills/remote-access-crew"],
   "platform": {"os": ["windows", "linux"], "arch": ["x86_64"], "requiresDesktopApp": false, "installMode": "server"},
-  "ui": {"entry": "index.mjs", "pages": [{"route": "/apps/remote-access-crew", "label": "Remote Access Crew", "iconUrl": "icon.svg"}]}
+  "ui": {"entry": "index.mjs", "pages": [{"route": "/apps/remote-access-crew", "label": "Remote Access Core (Bridge)", "iconUrl": "icon.svg"}]}
 }

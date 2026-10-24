@@ -1,4 +1,4 @@
-//! Windowless bridge process. Shows as "Remote Access Crew" with its icon in Task Manager.
+//! Windowless bridge process. Shows as "Remote Access Core (Bridge)" with its icon in Task Manager.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {

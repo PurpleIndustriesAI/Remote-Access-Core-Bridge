@@ -1,10 +1,10 @@
-//! Command-line control for the Remote Access Crew bridge.
+//! Command-line control for the Remote Access Core (Bridge).
 
 use anyhow::{Context, Result, bail};
 use rac::{config, daemon};
 use serde_json::{Value, json};
 
-const HELP: &str = "Remote Access Crew
+const HELP: &str = "Remote Access Core (Bridge)
 
 USAGE:
   rac daemon [--no-clipboard]     Run the bridge in this terminal

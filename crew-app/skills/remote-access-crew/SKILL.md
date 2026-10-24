@@ -1,9 +1,9 @@
 ---
 name: remote-access-crew
-description: Operate Remote Access Crew to pair machines and send text, images, or files between them over LAN or Tailscale. Use when the owner wants clipboard sync, to send a file to another of their machines, or to check whether a peer is reachable.
+description: Operate Remote Access Core (Bridge) to pair machines and send text, images, or files between them over LAN or Tailscale. Use when the owner wants clipboard sync, to send a file to another of their machines, or to check whether a peer is reachable.
 ---
 
-# Remote Access Crew
+# Remote Access Core (Bridge)
 
 A native bridge (`remote-access-crew`) runs on each machine. Paired machines sync the
 clipboard (text, images, files) automatically and accept on-demand sends. The `rac` CLI

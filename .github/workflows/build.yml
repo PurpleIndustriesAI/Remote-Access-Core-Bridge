@@ -94,4 +94,4 @@ jobs:
             'Secure two-way text, image, and file clipboard between your machines over LAN or Tailscale.' \
             'Install: extract, then run install.ps1 (Windows) or install.sh (Linux). Verify downloads against SHA256SUMS.txt.' \
             'See README.md and SECURITY.md inside the package.' > notes.md
-          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Remote Access Crew $TAG" --notes-file notes.md
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Remote Access Core (Bridge) $TAG" --notes-file notes.md

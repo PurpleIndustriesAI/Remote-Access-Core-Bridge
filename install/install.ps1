@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Install Remote Access Crew for the current Windows user.
+  Install Remote Access Core (Bridge) for the current Windows user.
 
 .DESCRIPTION
   Copies rac.exe and remote-access-crew.exe to %LOCALAPPDATA%\Programs\RemoteAccessCrew,
@@ -19,7 +19,9 @@ param(
   [switch]$NoStart
 )
 $ErrorActionPreference = 'Stop'
-$Name = 'Remote Access Crew'
+$Name = 'Remote Access Core (Bridge)'
+# Name used before the 2026-10-24 rename; its rule and shortcuts are replaced, not duplicated.
+$LegacyName = 'Remote Access Crew'
 $Dest = Join-Path $env:LOCALAPPDATA 'Programs\RemoteAccessCrew'
 $Bridge = Join-Path $Dest 'remote-access-crew.exe'
 
@@ -34,10 +36,10 @@ if ($Firewall) {
   $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
   if (-not $admin) { throw 'The -Firewall step needs an elevated PowerShell.' }
   if (-not (Test-Path $Bridge)) { throw "Install first (without -Firewall), then add the rule." }
-  Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+  Get-NetFirewallRule -DisplayName $Name, $LegacyName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   # Windows may have auto-created broad rules for this program on first listen; replace them.
   Get-NetFirewallApplicationFilter -Program $Bridge -ErrorAction SilentlyContinue | Get-NetFirewallRule | Remove-NetFirewallRule
-  New-NetFirewallRule -DisplayName $Name -Description 'Remote Access Crew peers on the local subnet and Tailscale only.' `
+  New-NetFirewallRule -DisplayName $Name -Description 'Remote Access Core (Bridge) peers on the local subnet and Tailscale only.' `
     -Direction Inbound -Action Allow -Program $Bridge -Protocol TCP -LocalPort 48765 `
     -RemoteAddress @('LocalSubnet', '100.64.0.0/10', 'fd7a:115c:a1e0::/48') -Profile Any | Out-Null
   Write-Host "Firewall rule added: TCP 48765 from LocalSubnet and Tailscale only."
@@ -66,6 +68,9 @@ $shell = New-Object -ComObject WScript.Shell
 $programs = [Environment]::GetFolderPath('Programs')
 $startup = [Environment]::GetFolderPath('Startup')
 foreach ($dir in @($programs, $startup)) {
+  # Drop a legacy-named shortcut only when it still launches this bridge; another app may own the name.
+  $legacy = Join-Path $dir "$LegacyName.lnk"
+  if ((Test-Path $legacy) -and $shell.CreateShortcut($legacy).TargetPath -eq $Bridge) { Remove-Item $legacy }
   $lnk = $shell.CreateShortcut((Join-Path $dir "$Name.lnk"))
   $lnk.TargetPath = $Bridge
   $lnk.WorkingDirectory = $Dest
