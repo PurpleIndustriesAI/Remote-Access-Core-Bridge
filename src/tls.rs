@@ -8,6 +8,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, Serve
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{CertificateError, DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -21,6 +22,9 @@ pub struct Trust {
     pub peers: RwLock<HashSet<String>>,
     /// While set and in the future, unknown certificates may connect, but only to pair.
     pub pairing_until: Mutex<Option<Instant>>,
+    /// Host with Moonlight link on: unknown certificates may connect, but only to present a
+    /// Moonlight signature. The daemon refuses every other message from them.
+    pub moonlight_link: AtomicBool,
 }
 
 impl Trust {
@@ -29,6 +33,9 @@ impl Trust {
     }
     pub fn pairing_open(&self) -> bool {
         matches!(*self.pairing_until.lock().unwrap(), Some(t) if t > Instant::now())
+    }
+    pub fn moonlight_link_open(&self) -> bool {
+        self.moonlight_link.load(Ordering::Relaxed)
     }
 }
 
@@ -68,7 +75,7 @@ impl ClientCertVerifier for PinnedClients {
     }
     fn verify_client_cert(&self, end: &CertificateDer<'_>, _i: &[CertificateDer<'_>], _now: UnixTime) -> Result<ClientCertVerified, Error> {
         let fp = fingerprint(end);
-        if self.trust.is_peer(&fp) || self.trust.pairing_open() {
+        if self.trust.is_peer(&fp) || self.trust.pairing_open() || self.trust.moonlight_link_open() {
             Ok(ClientCertVerified::assertion())
         } else {
             Err(bad_cert())

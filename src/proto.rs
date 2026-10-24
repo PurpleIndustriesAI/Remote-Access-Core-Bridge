@@ -30,6 +30,11 @@ pub enum Msg {
     Echo { n: u32 },
     /// Throughput test: the receiver discards `up` bytes, then sends `down` bytes back.
     Bench { up: u64, down: u64 },
+    /// Link a Moonlight client to its host. `sig` is the Moonlight key's signature (hex) over
+    /// `moonlight::link_message(host_fp, client_fp)`.
+    MoonlightLink { moonlight_cert: String, sig: String, name: String, addrs: Vec<String> },
+    /// One file for an app channel such as Crew Link. It never touches the clipboard.
+    Channel { channel: String, name: String, len: u64, sha256: String },
 }
 
 pub const MAX_ECHO: u32 = 200;

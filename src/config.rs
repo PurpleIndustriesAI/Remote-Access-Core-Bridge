@@ -61,6 +61,7 @@ mod consent_tests {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub port: u16,
     /// Sync clipboard changes to peers automatically.
@@ -72,6 +73,26 @@ pub struct Settings {
     pub max_image_bytes: u64,
     pub max_text_bytes: u64,
     pub receive_dir: Option<PathBuf>,
+    /// Host only: Sunshine's `sunshine_state.json`. When set, clients Sunshine has paired
+    /// may link with a Moonlight signature instead of a typed code.
+    pub moonlight_link: Option<PathBuf>,
+    /// App channels this machine accepts (for example "crew-link"). Empty accepts none.
+    pub channels: Vec<String>,
+    /// Hard ceiling on one received channel file.
+    pub max_channel_bytes: u64,
+}
+
+/// Channel names are short lowercase words so they are safe as folder names.
+pub fn valid_channel(name: &str) -> bool {
+    (1..=32).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Where files received on an app channel land: `<home>/channels/<name>/inbox`.
+pub fn channel_inbox(dir: &Path, channel: &str) -> Result<PathBuf> {
+    if !valid_channel(channel) {
+        bail!("channel names use 1-32 lowercase letters, digits or '-'");
+    }
+    Ok(dir.join("channels").join(channel).join("inbox"))
 }
 
 impl Default for Settings {
@@ -84,6 +105,9 @@ impl Default for Settings {
             max_image_bytes: 128 * 1024 * 1024,
             max_text_bytes: 8 * 1024 * 1024,
             receive_dir: None,
+            moonlight_link: None,
+            channels: Vec::new(),
+            max_channel_bytes: 64 * 1024 * 1024,
         }
     }
 }

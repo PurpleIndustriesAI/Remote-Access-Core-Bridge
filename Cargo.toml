@@ -1,6 +1,6 @@
 [package]
 name = "remote-access-crew"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Secure two-way clipboard, image, and file sharing between paired machines over LAN or Tailscale."
 license-file = "LICENSE"
@@ -36,7 +36,12 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "fs"] }
+rustls-webpki = { version = "0.103.16", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+
+[dev-dependencies]
+# Signs test link messages the way a Moonlight client does (already in the lockfile via rustls).
+ring = "0.17.14"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_DataExchange", "Win32_Foundation"] }

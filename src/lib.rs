@@ -4,6 +4,7 @@
 pub mod clip;
 pub mod config;
 pub mod daemon;
+pub mod moonlight;
 pub mod net;
 pub mod netdiag;
 pub mod proto;

@@ -2,6 +2,7 @@
 
 use crate::clip::{self, ClipHandle, Content};
 use crate::config::{self, Identity, Peer, State, short_fingerprint};
+use crate::moonlight;
 use crate::net;
 use crate::proto::{self, FileEntry, Msg, Reply};
 use crate::tls::{self, Trust};
@@ -58,6 +59,7 @@ pub struct Node {
     acceptor: TlsAcceptor,
     send_lock: tokio::sync::Mutex<()>,
     token: String,
+    link_limiter: moonlight::Limiter,
 }
 
 fn now() -> u64 {
@@ -91,8 +93,12 @@ impl Node {
     }
 
     fn sync_trust(&self) {
-        let fps: HashSet<String> = self.state.lock().unwrap().peers.iter().map(|p| p.fingerprint.clone()).collect();
+        let (fps, link): (HashSet<String>, bool) = {
+            let st = self.state.lock().unwrap();
+            (st.peers.iter().map(|p| p.fingerprint.clone()).collect(), st.settings.moonlight_link.is_some())
+        };
         *self.trust.peers.write().unwrap() = fps;
+        self.trust.moonlight_link.store(link, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Remember an address a peer reached us from, keeping its listening port.
@@ -143,6 +149,7 @@ pub async fn run(opts: Options) -> Result<()> {
         acceptor,
         send_lock: tokio::sync::Mutex::new(()),
         token,
+        link_limiter: moonlight::Limiter::default(),
     });
     node.sync_trust();
     eprintln!("[rac] Remote Access Core (Bridge) {} listening on port {port}; identity {}", env!("CARGO_PKG_VERSION"), short_fingerprint(&node.id.fingerprint));
@@ -204,6 +211,12 @@ async fn handle_peer(node: Arc<Node>, sock: TcpStream, addr: SocketAddr) -> Resu
         tls.shutdown().await.ok();
         return Ok(());
     }
+    if let Msg::MoonlightLink { moonlight_cert, sig, name, addrs } = msg {
+        let reply = accept_moonlight_link(&node, &fp, addr, &moonlight_cert, &sig, &name, addrs);
+        proto::write_json(&mut tls, &reply).await?;
+        tls.shutdown().await.ok();
+        return Ok(());
+    }
     if !known {
         proto::write_json(&mut tls, &Reply::err("not paired")).await?;
         bail!("unpaired certificate tried {}", short_fingerprint(&fp));
@@ -243,18 +256,52 @@ fn accept_pairing(node: &Node, client_fp: &str, addr: SocketAddr, proof: &str, n
     *node.trust.pairing_until.lock().unwrap() = None;
     drop(guard);
 
-    let port = addrs.first().and_then(|a| a.parse::<SocketAddr>().ok()).map(|a| a.port()).unwrap_or(config::DEFAULT_PORT);
-    let mut list = vec![SocketAddr::new(addr.ip(), port).to_string()];
-    for a in addrs.into_iter().filter(|a| a.parse::<SocketAddr>().map(|s| net::is_allowed_source(&s.ip())).unwrap_or(false)) {
+    let list = peer_addrs(addr, &addrs, addrs.clone());
+    let name = clean_name(name);
+    upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions: Default::default() });
+    node.event("in", &name, "pair", 0, true, "paired");
+    Reply { ok: true, proof: Some(server_proof), name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), error: None }
+}
+
+/// Peer addresses from a reply or request: the address it reached us from first, then any
+/// it advertised that are on the LAN or Tailscale.
+fn peer_addrs(seen: SocketAddr, port_hint: &[String], advertised: Vec<String>) -> Vec<String> {
+    let port = port_hint.first().and_then(|a| a.parse::<SocketAddr>().ok()).map(|a| a.port()).unwrap_or(config::DEFAULT_PORT);
+    let mut list = vec![SocketAddr::new(seen.ip(), port).to_string()];
+    for a in advertised.into_iter().filter(|a| a.parse::<SocketAddr>().map(|s| net::is_allowed_source(&s.ip())).unwrap_or(false)) {
         if !list.contains(&a) {
             list.push(a);
         }
     }
     list.truncate(8);
-    let name = clean_name(name);
-    upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions: Default::default() });
-    node.event("in", &name, "pair", 0, true, "paired");
-    Reply { ok: true, proof: Some(server_proof), name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), error: None }
+    list
+}
+
+/// Host side of a Moonlight link. The TLS layer let an unknown certificate through only
+/// because Moonlight link is on; it gets peer trust only if Sunshine paired its key.
+fn accept_moonlight_link(node: &Node, client_fp: &str, addr: SocketAddr, cert: &str, sig: &str, name: &str, addrs: Vec<String>) -> Reply {
+    let Some(state_path) = node.state.lock().unwrap().settings.moonlight_link.clone() else {
+        return Reply::err("Moonlight link is off on this host");
+    };
+    if !node.link_limiter.allowed() {
+        return Reply::err("too many failed link attempts; try again in a minute");
+    }
+    match moonlight::check_link(&state_path, cert, sig, &node.id.fingerprint, client_fp) {
+        Ok(device) => {
+            let name = clean_name(&format!("{} via Moonlight", if device.trim().is_empty() { name } else { &device }));
+            let list = peer_addrs(addr, &addrs, addrs.clone());
+            // Turning Moonlight link on is the host owner's approval for these clients.
+            let permissions = config::Permissions { clipboard: true, files: true };
+            upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions });
+            node.event("in", &name, "moonlight-link", 0, true, "linked through Sunshine pairing");
+            Reply { ok: true, name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), ..Default::default() }
+        }
+        Err(e) => {
+            node.link_limiter.failed();
+            node.event("in", &short_fingerprint(client_fp), "moonlight-link", 0, false, format!("{e:#}"));
+            Reply::err(format!("{e:#}"))
+        }
+    }
 }
 
 fn clean_name(n: &str) -> String {
@@ -290,7 +337,15 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
     let settings = node.state.lock().unwrap().settings.clone();
     match msg {
         Msg::Ping => Ok(()),
-        Msg::Pair { .. } => unreachable!(),
+        Msg::Pair { .. } | Msg::MoonlightLink { .. } => unreachable!(),
+        Msg::Channel { channel, name, len, sha256 } => {
+            let r = receive_channel(node, s, &settings, &channel, &name, len, &sha256).await;
+            match &r {
+                Ok(p) => node.event("in", peer, &format!("channel:{channel}"), len, true, format!("saved {}", p.display())),
+                Err(e) => node.event("in", peer, &format!("channel:{channel}"), len, false, format!("{e:#}")),
+            }
+            r.map(|_| ())
+        }
         Msg::Echo { n } => {
             if n > proto::MAX_ECHO {
                 bail!("too many probes");
@@ -467,6 +522,69 @@ async fn receive_files<R: AsyncRead + Unpin>(node: &Node, r: &mut R, files: Vec<
     Ok((total, roots.into_iter().map(|(_, p)| p).collect()))
 }
 
+/// Save one channel file into `<home>/channels/<channel>/inbox`. Only channels the owner
+/// enabled are accepted; the file is verified before it appears under its final name.
+async fn receive_channel<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, r: &mut S, st: &config::Settings, channel: &str, name: &str, len: u64, sha256: &str) -> Result<PathBuf> {
+    let check = || -> Result<String> {
+        if !st.channels.iter().any(|c| c == channel) {
+            bail!("channel '{channel}' is not enabled on this machine");
+        }
+        if len > st.max_channel_bytes {
+            bail!("channel file is larger than the receiver's limit");
+        }
+        if sha256.len() != 64 || !sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
+            bail!("bad checksum format");
+        }
+        let [seg] = proto::safe_relative(name)?.try_into().map_err(|_| anyhow!("channel files are single names, not paths"))?;
+        Ok(seg)
+    };
+    // Answer before the body: a refusal then reaches the sender instead of being lost when
+    // the connection closes under a body that is still being written.
+    let seg = match check() {
+        Ok(s) => {
+            proto::write_json(r, &Reply::ok()).await?;
+            s
+        }
+        Err(e) => {
+            proto::write_json(r, &Reply::err(format!("{e:#}"))).await.ok();
+            return Err(e);
+        }
+    };
+    let inbox = config::channel_inbox(&node.dir, channel)?;
+    tokio::fs::create_dir_all(&inbox).await?;
+    let dest = proto::unique_child(&inbox, &seg);
+    let part = part_path(&dest);
+    let res = async {
+        let mut out = tokio::fs::OpenOptions::new().write(true).create_new(true).open(&part).await?;
+        let mut h = Sha256::new();
+        let mut buf = vec![0u8; COPY_BUF];
+        let mut left = len;
+        while left > 0 {
+            let n = (left as usize).min(buf.len());
+            tokio::time::timeout(IO_TIMEOUT, r.read_exact(&mut buf[..n])).await??;
+            h.update(&buf[..n]);
+            out.write_all(&buf[..n]).await?;
+            left -= n as u64;
+        }
+        out.flush().await?;
+        drop(out);
+        if hex::encode(h.finalize()) != sha256.to_ascii_lowercase() {
+            bail!("checksum mismatch; channel file discarded");
+        }
+        if dest.exists() {
+            bail!("destination appeared during transfer");
+        }
+        tokio::fs::rename(&part, &dest).await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    if let Err(e) = res {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+    Ok(dest)
+}
+
 fn part_path(dest: &Path) -> PathBuf {
     let mut s = dest.as_os_str().to_owned();
     s.push(".rac-part");
@@ -545,6 +663,7 @@ enum Body {
     None,
     Bytes(Vec<u8>),
     Files(Vec<PathBuf>),
+    File(PathBuf, u64),
 }
 
 /// Collect files (folders are walked; symlinks are skipped) and hash them.
@@ -619,26 +738,82 @@ fn outgoing(c: Content, limit: u64) -> Result<Outgoing> {
     })
 }
 
+async fn stream_file<W: AsyncWrite + Unpin>(t: &mut W, p: &Path, len: u64) -> Result<()> {
+    let mut f = tokio::fs::File::open(p).await?;
+    let mut buf = vec![0u8; COPY_BUF];
+    let mut left = len;
+    while left > 0 {
+        let n = (left as usize).min(buf.len());
+        f.read_exact(&mut buf[..n]).await.context("a file changed while it was being sent")?;
+        t.write_all(&buf[..n]).await?;
+        left -= n as u64;
+    }
+    Ok(())
+}
+
+/// Send one file on an app channel to one peer. The receiver decides whether it accepts
+/// the channel; nothing goes to the clipboard.
+async fn channel_send(node: &Node, fp: &str, channel: &str, path: &Path) -> Result<Value> {
+    if !config::valid_channel(channel) {
+        bail!("channel names use 1-32 lowercase letters, digits or '-'");
+    }
+    let peer = node.peer(fp).context("unknown peer")?;
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).context("path has no file name")?;
+    let p = path.to_path_buf();
+    let (len, sha256) = tokio::task::spawn_blocking(move || -> Result<(u64, String)> {
+        let mut f = std::fs::File::open(&p)?;
+        let mut h = Sha256::new();
+        let mut buf = vec![0u8; COPY_BUF];
+        let mut len = 0u64;
+        loop {
+            let n = std::io::Read::read(&mut f, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+            h.update(&buf[..n]);
+            len += n as u64;
+        }
+        Ok((len, hex::encode(h.finalize())))
+    })
+    .await??;
+    let limit = node.state.lock().unwrap().settings.max_channel_bytes;
+    if len > limit {
+        bail!("channel files are limited to {} MiB", limit / 1024 / 1024);
+    }
+    let out = Outgoing {
+        msg: Msg::Channel { channel: channel.to_string(), name, len, sha256: sha256.clone() },
+        body: Body::File(path.to_path_buf(), len),
+        bytes: len,
+    };
+    let r = deliver(node, &peer, &out).await;
+    node.event("out", &peer.name, &format!("channel:{channel}"), len, r.is_ok(), match &r {
+        Ok(()) => "delivered".to_string(),
+        Err(e) => format!("{e:#}"),
+    });
+    r?;
+    Ok(json!({"peer": peer.name, "bytes": len, "sha256": sha256}))
+}
+
 async fn deliver(node: &Node, peer: &Peer, out: &Outgoing) -> Result<()> {
     let (mut t, addr) = connect(node, peer).await?;
     proto::write_json(&mut t, &out.msg).await?;
+    if matches!(out.msg, Msg::Channel { .. }) {
+        // The receiver accepts or refuses the header before any body bytes are sent.
+        let go: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut t)).await??;
+        if !go.ok {
+            bail!("{} declined: {}", peer.name, go.error.unwrap_or_default());
+        }
+    }
     match &out.body {
         Body::None => {}
         Body::Bytes(b) => t.write_all(b).await?,
         Body::Files(paths) => {
             let Msg::Files { files } = &out.msg else { unreachable!() };
-            let mut buf = vec![0u8; COPY_BUF];
             for (p, e) in paths.iter().zip(files) {
-                let mut f = tokio::fs::File::open(p).await?;
-                let mut left = e.len;
-                while left > 0 {
-                    let n = (left as usize).min(buf.len());
-                    f.read_exact(&mut buf[..n]).await.context("a file changed while it was being sent")?;
-                    t.write_all(&buf[..n]).await?;
-                    left -= n as u64;
-                }
+                stream_file(&mut t, p, e.len).await?;
             }
         }
+        Body::File(p, len) => stream_file(&mut t, p, *len).await?,
     }
     t.flush().await?;
     let wait = IO_TIMEOUT + Duration::from_secs(out.bytes / (5 * 1024 * 1024));
@@ -778,10 +953,8 @@ async fn speedtest(node: &Node, fp: &str, mib: u64) -> Result<Value> {
               "latency": p, "recommended_moonlight_mbps": rec}))
 }
 
-async fn pair_with(node: &Node, target: &str, code: &str) -> Result<Peer> {
-    if proto::normalize_code(code).len() != 16 {
-        bail!("pairing codes have 16 letters and digits");
-    }
+/// Resolve "host", "host:port", "v6" or "[v6]:port" to a LAN or Tailscale socket address.
+async fn resolve_target(target: &str) -> Result<SocketAddr> {
     let target = if target.contains(':') && (target.contains(']') || target.matches(':').count() == 1) {
         target.to_string()
     } else if target.parse::<std::net::Ipv6Addr>().is_ok() {
@@ -790,7 +963,51 @@ async fn pair_with(node: &Node, target: &str, code: &str) -> Result<Peer> {
         format!("{target}:{}", config::DEFAULT_PORT)
     };
     let addrs: Vec<SocketAddr> = tokio::net::lookup_host(&target).await.context("cannot resolve the peer address")?.collect();
-    let sa = addrs.into_iter().find(|a| net::is_allowed_source(&a.ip())).context("the address is not on your LAN or Tailscale network")?;
+    addrs.into_iter().find(|a| net::is_allowed_source(&a.ip())).context("the address is not on your LAN or Tailscale network")
+}
+
+/// Client side of a Moonlight link. The host fingerprint comes from Sunshine's app list, so
+/// it is pinned from the first byte: only the real host can complete the handshake.
+async fn moonlight_link_with(node: &Node, target: &str, host_fp: &str, cert: &str, sig: &str) -> Result<Peer> {
+    let host_fp = host_fp.trim().to_ascii_lowercase();
+    if host_fp.len() != 64 || !host_fp.bytes().all(|c| c.is_ascii_hexdigit()) {
+        bail!("the host fingerprint must be 64 hex characters");
+    }
+    let sa = resolve_target(target).await?;
+    let cfg = tls::client_config(&node.id, Some(host_fp.clone()))?;
+    let sock = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(sa)).await.context("connection timed out")??;
+    let mut t = tokio::time::timeout(IO_TIMEOUT, TlsConnector::from(cfg).connect(tls::server_name(), sock))
+        .await?
+        .context("the host's bridge did not prove the identity Sunshine published, or Moonlight link is off there")?;
+    // TLS 1.3 reports a refused client certificate only after the handshake, on first I/O.
+    const REFUSED: &str = "the host refused this link; turn on Moonlight link in Remote Access Crew (Host)";
+    let msg = Msg::MoonlightLink { moonlight_cert: cert.to_string(), sig: sig.to_string(), name: node.name.clone(), addrs: net::local_addrs(node.port()) };
+    proto::write_json(&mut t, &msg).await.context(REFUSED)?;
+    let reply: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut t)).await?.context(REFUSED)?;
+    t.shutdown().await.ok();
+    if !reply.ok {
+        bail!("link refused: {}", reply.error.unwrap_or_default());
+    }
+    let mut list = vec![sa.to_string()];
+    for a in reply.addrs {
+        if a.parse::<SocketAddr>().map(|s| net::is_allowed_source(&s.ip())).unwrap_or(false) && !list.contains(&a) {
+            list.push(a);
+        }
+    }
+    list.truncate(8);
+    // The client links only when its owner turned sharing on; it revokes this when sharing stops.
+    let permissions = config::Permissions { clipboard: true, files: true };
+    let peer = Peer { name: clean_name(reply.name.as_deref().unwrap_or("host")), fingerprint: host_fp, addrs: list, autosync: true, paired_at: now(), permissions };
+    upsert_peer(node, peer.clone());
+    node.event("out", &peer.name, "moonlight-link", 0, true, "linked through Sunshine pairing");
+    Ok(peer)
+}
+
+async fn pair_with(node: &Node, target: &str, code: &str) -> Result<Peer> {
+    if proto::normalize_code(code).len() != 16 {
+        bail!("pairing codes have 16 letters and digits");
+    }
+    let sa = resolve_target(target).await?;
     let cfg = tls::client_config(&node.id, None)?;
     let sock = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(sa)).await.context("connection timed out")??;
     const NOT_OPEN: &str = "the other machine refused; open pairing there first (Pair a device, or rac pair-code) and use its current code";
@@ -970,10 +1187,39 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
                 if let Some(d) = req.get("receive_dir").and_then(|v| v.as_str()) {
                     st.settings.receive_dir = if d.trim().is_empty() { None } else { Some(PathBuf::from(d)) };
                 }
+                if let Some(p) = req.get("moonlight_link").and_then(|v| v.as_str()) {
+                    st.settings.moonlight_link = if p.trim().is_empty() {
+                        None
+                    } else {
+                        let p = PathBuf::from(p);
+                        moonlight::sunshine_clients(&p).context("Moonlight link needs a readable sunshine_state.json")?;
+                        Some(p)
+                    };
+                }
+                if let Some(arr) = req.get("channels").and_then(|v| v.as_array()) {
+                    let list: Vec<String> = arr.iter().filter_map(|v| v.as_str()).map(String::from).collect();
+                    if let Some(bad) = list.iter().find(|c| !config::valid_channel(c)) {
+                        bail!("invalid channel name '{bad}'");
+                    }
+                    st.settings.channels = list;
+                }
             }
+            node.sync_trust();
             node.save()?;
             Ok(status(node))
         }
+        "link_message" => {
+            // What the Moonlight client signs. The client's own fingerprint comes from here,
+            // never from the caller, so a caller cannot get a signature for another bridge.
+            let host_fp = str_arg(req, "host_fp")?.trim().to_ascii_lowercase();
+            Ok(json!({"message": moonlight::link_message(&host_fp, &node.id.fingerprint), "client_fp": node.id.fingerprint}))
+        }
+        "moonlight_link" => {
+            let p = moonlight_link_with(node, str_arg(req, "addr")?, str_arg(req, "host_fp")?, str_arg(req, "moonlight_cert")?, str_arg(req, "sig")?).await?;
+            Ok(json!({"name": p.name, "fingerprint": p.fingerprint, "short_fingerprint": short_fingerprint(&p.fingerprint)}))
+        }
+        "host_app_title" => Ok(json!({"title": moonlight::app_title(&node.id.fingerprint)})),
+        "channel_send" => channel_send(node, str_arg(req, "peer")?, str_arg(req, "channel")?, Path::new(str_arg(req, "path")?)).await,
         "send" => {
             let target = req.get("peer").and_then(|v| v.as_str()).map(String::from);
             let content = if let Some(t) = req.get("text").and_then(|v| v.as_str()) {

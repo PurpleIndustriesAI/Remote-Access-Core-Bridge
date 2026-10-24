@@ -19,6 +19,13 @@ USAGE:
   rac net [--watch]               Wi-Fi signal, band, channel, and advice (--watch: live signal finder)
   rac probe PEER                  Latency and jitter to a peer
   rac speedtest PEER              Two-way throughput and a suggested Moonlight bitrate
+  rac moonlight-link on [STATE] | off
+                                  Host: let clients Sunshine paired link without a code
+                                  (STATE defaults to Sunshine's sunshine_state.json)
+  rac host-app-title              Host: the Sunshine app title that publishes this identity
+  rac channel on|off NAME         Accept or stop accepting files for an app channel
+  rac channel-send --to PEER --channel NAME FILE
+                                  Send one file on an app channel (never the clipboard)
   rac version
 
 PEER is a peer name or the start of its fingerprint.";
@@ -209,6 +216,57 @@ fn real_main() -> Result<()> {
             let r = call(json!({"cmd": "speedtest", "peer": fp}))?;
             println!("{} via {}: upload {:.0} Mbps, download {:.0} Mbps", r["peer"].as_str().unwrap_or("?"), r["via"].as_str().unwrap_or("?"), r["up_mbps"].as_f64().unwrap_or(0.0), r["down_mbps"].as_f64().unwrap_or(0.0));
             println!("Suggested Moonlight video bitrate: {} Mbps", r["recommended_moonlight_mbps"]);
+            Ok(())
+        }
+        "moonlight-link" => {
+            let path = match args.get(1).map(String::as_str) {
+                Some("on") => args.get(2).cloned().unwrap_or_else(|| r"C:\Program Files\Sunshine\config\sunshine_state.json".into()),
+                Some("off") => String::new(),
+                _ => bail!("use: rac moonlight-link on [STATE] | off"),
+            };
+            call(json!({"cmd": "set", "moonlight_link": path}))?;
+            println!("Moonlight link {}.", if path.is_empty() { "off" } else { "on" });
+            Ok(())
+        }
+        "host-app-title" => {
+            println!("{}", call(json!({"cmd": "host_app_title"}))?["title"].as_str().unwrap_or(""));
+            Ok(())
+        }
+        "channel" => {
+            let (on, name) = match (args.get(1).map(String::as_str), args.get(2)) {
+                (Some("on"), Some(n)) => (true, n.clone()),
+                (Some("off"), Some(n)) => (false, n.clone()),
+                _ => bail!("use: rac channel on|off NAME"),
+            };
+            let st = call(json!({"cmd": "status"}))?;
+            let mut list: Vec<String> = st["settings"]["channels"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
+            list.retain(|c| *c != name);
+            if on {
+                list.push(name.clone());
+            }
+            call(json!({"cmd": "set", "channels": list}))?;
+            println!("Channel {name} {}.", if on { "on" } else { "off" });
+            Ok(())
+        }
+        "channel-send" => {
+            let (mut peer, mut channel, mut file) = (None, None, None);
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--to" => {
+                        i += 1;
+                        peer = Some(resolve_peer(args.get(i).context("--to needs a peer")?)?);
+                    }
+                    "--channel" => {
+                        i += 1;
+                        channel = args.get(i).cloned();
+                    }
+                    f => file = Some(std::fs::canonicalize(f).with_context(|| format!("cannot find {f}"))?.to_string_lossy().to_string()),
+                }
+                i += 1;
+            }
+            let r = call(json!({"cmd": "channel_send", "peer": peer.context("--to is required")?, "channel": channel.context("--channel is required")?, "path": file.context("a file is required")?}))?;
+            println!("Delivered {} bytes to {}", r["bytes"], r["peer"].as_str().unwrap_or("?"));
             Ok(())
         }
         "version" | "--version" => {
