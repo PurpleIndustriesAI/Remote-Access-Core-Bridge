@@ -28,6 +28,8 @@ pub struct Options {
     pub dir: PathBuf,
     /// Read and write the system clipboard. Off for headless tests.
     pub clipboard: bool,
+    /// Listen on loopback only. Tests use this so the OS firewall never asks to allow them.
+    pub loopback_only: bool,
 }
 
 struct Pairing {
@@ -129,8 +131,9 @@ pub async fn run(opts: Options) -> Result<()> {
     let control = TcpListener::bind(("127.0.0.1", port + config::CONTROL_PORT_OFFSET))
         .await
         .with_context(|| format!("control port {} is busy; is the bridge already running?", port + 1))?;
-    let v4 = TcpListener::bind(("0.0.0.0", port)).await.with_context(|| format!("peer port {port} is busy"))?;
-    let v6 = TcpListener::bind(("::", port)).await.ok();
+    let (any4, any6) = if opts.loopback_only { ("127.0.0.1", "::1") } else { ("0.0.0.0", "::") };
+    let v4 = TcpListener::bind((any4, port)).await.with_context(|| format!("peer port {port} is busy"))?;
+    let v6 = TcpListener::bind((any6, port)).await.ok();
 
     let trust = Arc::new(Trust::default());
     let acceptor = TlsAcceptor::from(tls::server_config(&id, trust.clone())?);

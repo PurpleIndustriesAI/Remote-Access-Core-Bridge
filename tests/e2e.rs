@@ -34,14 +34,14 @@ async fn wait_up(dir: &Path) {
 /// Fixed ports break when Windows reserves their range (Hyper-V, WSL and Docker do).
 fn free_base() -> u16 {
     use std::net::TcpListener;
-    let ok = |p: u16| TcpListener::bind(("0.0.0.0", p)).is_ok() && TcpListener::bind(("127.0.0.1", p + 1)).is_ok();
+    let ok = |p: u16| TcpListener::bind(("127.0.0.1", p)).is_ok() && TcpListener::bind(("127.0.0.1", p + 1)).is_ok();
     (20000..60000).step_by(100).find(|&b| (1..=5).all(|k| ok(b + k * 10))).expect("no free port block")
 }
 
 fn start(dir: &Path) {
     let d = dir.to_path_buf();
     tokio::spawn(async move {
-        if let Err(e) = daemon::run(daemon::Options { dir: d.clone(), clipboard: false }).await {
+        if let Err(e) = daemon::run(daemon::Options { dir: d.clone(), clipboard: false, loopback_only: true }).await {
             eprintln!("bridge in {} exited: {e:#}", d.display());
         }
     });

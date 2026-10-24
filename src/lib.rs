@@ -14,5 +14,5 @@ pub mod tls;
 pub fn run_bridge(clipboard: bool) -> anyhow::Result<()> {
     let dir = config::ensure_home()?;
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
-    rt.block_on(daemon::run(daemon::Options { dir, clipboard }))
+    rt.block_on(daemon::run(daemon::Options { dir, clipboard, loopback_only: false }))
 }

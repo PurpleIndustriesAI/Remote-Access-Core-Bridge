@@ -25,7 +25,7 @@ async fn call(dir: &Path, v: Value) -> Value {
 async fn start(dir: &Path, clipboard: bool) {
     let d = dir.to_path_buf();
     tokio::spawn(async move {
-        if let Err(e) = daemon::run(daemon::Options { dir: d, clipboard }).await {
+        if let Err(e) = daemon::run(daemon::Options { dir: d, clipboard, loopback_only: true }).await {
             panic!("bridge failed: {e:#}");
         }
     });
