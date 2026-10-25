@@ -107,6 +107,27 @@ mod consent_tests {
     }
 
     #[test]
+    fn legacy_grants_require_fresh_consent_once() {
+        let dir = std::env::temp_dir().join(format!("rac-legacy-consent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let data = r#"{"settings":{},"peers":[
+            {"name":"Miku via Moonlight","fingerprint":"abc","addrs":[],"paired_at":0,"permissions":{"clipboard":true,"files":true}},
+            {"name":"Phone","fingerprint":"def","addrs":[],"paired_at":0,"permissions":{"clipboard":true,"files":true}}
+        ]}"#;
+        std::fs::write(dir.join("state.json"),data).unwrap();
+        let mut state = load_state(&dir).unwrap();
+        assert!(!state.peers[0].permissions.clipboard && !state.peers[0].permissions.files);
+        assert!(!state.peers[1].permissions.clipboard && !state.peers[1].permissions.files);
+        state.peers[1].permissions.clipboard = true;
+        save_state(&dir,&state).unwrap();
+        let reloaded = load_state(&dir).unwrap();
+        assert!(!reloaded.peers[0].permissions.clipboard);
+        assert!(reloaded.peers[1].permissions.clipboard);
+        assert_eq!(reloaded.peers[1].fingerprint,"def");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn older_settings_allow_access_requests() {
         let s: Settings = serde_json::from_str(r#"{"port":48765}"#).unwrap();
         assert!(s.allow_access_requests);
@@ -129,6 +150,11 @@ pub struct Settings {
     /// Host only: Sunshine's `sunshine_state.json`. When set, clients Sunshine has paired
     /// may link with a Moonlight signature instead of a typed code.
     pub moonlight_link: Option<PathBuf>,
+    /// Host-side link origin: bridge fingerprint to Sunshine certificate fingerprint.
+    pub moonlight_peers: std::collections::HashMap<String, String>,
+    /// Old releases did not retain reliable link provenance. Reset their grants once.
+    #[serde(default)]
+    pub consent_revision: u8,
     /// App channels this machine accepts (for example "crew-link"). Empty accepts none.
     pub channels: Vec<String>,
     /// Hard ceiling on one received channel file.
@@ -161,6 +187,8 @@ impl Default for Settings {
             max_text_bytes: 8 * 1024 * 1024,
             receive_dir: None,
             moonlight_link: None,
+            moonlight_peers: Default::default(),
+            consent_revision: 1,
             channels: Vec::new(),
             max_channel_bytes: 64 * 1024 * 1024,
             allow_access_requests: true,
@@ -277,7 +305,21 @@ pub fn load_state(dir: &Path) -> Result<State> {
         return Ok(State::default());
     }
     let raw = fs::read(&p)?;
-    serde_json::from_slice(&raw).context("state.json is not valid; fix or remove it")
+    let mut state: State = serde_json::from_slice(&raw).context("state.json is not valid; fix or remove it")?;
+    // Old labels can be truncated, so they cannot identify every automatic Moonlight grant.
+    // Reset all legacy grants once; retain identities and addresses for explicit local approval.
+    if state.settings.consent_revision == 0 {
+        for peer in &mut state.peers { peer.permissions = Permissions::default(); }
+        state.settings.consent_revision = 1;
+    }
+    // Known old links also require a fresh certificate binding.
+    for peer in &mut state.peers {
+        if peer.name.ends_with(" via Moonlight") && !state.settings.moonlight_peers.contains_key(&peer.fingerprint) {
+            state.settings.moonlight_peers.insert(peer.fingerprint.clone(), String::new());
+            peer.permissions = Permissions::default();
+        }
+    }
+    Ok(state)
 }
 
 pub fn save_state(dir: &Path, state: &State) -> Result<()> {

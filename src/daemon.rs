@@ -213,13 +213,13 @@ async fn accept_loop(node: Arc<Node>, l: TcpListener) {
 
 async fn handle_peer(node: Arc<Node>, sock: TcpStream, addr: SocketAddr) -> Result<()> {
     let _ = sock.set_nodelay(true);
-    let mut tls = tokio::time::timeout(IO_TIMEOUT, node.acceptor.accept(sock)).await??;
-    let fp = {
-        let (_, conn) = tls.get_ref();
-        let c = conn.peer_certificates().and_then(|c| c.first()).context("no client certificate")?;
-        config::fingerprint(c)
-    };
-    let msg: Msg = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut tls)).await??;
+    let (mut tls, fp, msg) = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut tls = node.acceptor.accept(sock).await?;
+        let c = tls.get_ref().1.peer_certificates().and_then(|c| c.first()).context("no client certificate")?;
+        let fp = config::fingerprint(c);
+        let msg: Msg = proto::read_json(&mut tls).await?;
+        Ok::<_, anyhow::Error>((tls, fp, msg))
+    }).await.context("peer authentication timed out")??;
     let known = node.trust.is_peer(&fp);
     if let Msg::Pair { proof, name, addrs } = msg {
         let reply = accept_pairing(&node, &fp, addr, &proof, &name, addrs);
@@ -274,6 +274,7 @@ fn accept_pairing(node: &Node, client_fp: &str, addr: SocketAddr, proof: &str, n
 
     let list = peer_addrs(addr, &addrs, addrs.clone());
     let name = clean_name(name);
+    node.state.lock().unwrap().settings.moonlight_peers.remove(client_fp);
     upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions: Default::default() });
     node.event("in", &name, "pair", 0, true, "paired");
     Reply { ok: true, proof: Some(server_proof), name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), error: None }
@@ -299,21 +300,27 @@ fn accept_moonlight_link(node: &Node, client_fp: &str, addr: SocketAddr, cert: &
     let Some(state_path) = node.state.lock().unwrap().settings.moonlight_link.clone() else {
         return Reply::err("Moonlight link is off on this host");
     };
-    if !node.link_limiter.allowed() {
+    if !node.link_limiter.allowed(addr.ip()) {
         return Reply::err("too many failed link attempts; try again in a minute");
     }
     match moonlight::check_link(&state_path, cert, sig, &node.id.fingerprint, client_fp) {
         Ok(device) => {
             let name = clean_name(&format!("{} via Moonlight", if device.trim().is_empty() { name } else { &device }));
             let list = peer_addrs(addr, &addrs, addrs.clone());
-            // Turning Moonlight link on is the host owner's approval for these clients.
-            let permissions = config::Permissions { clipboard: true, files: true };
+            let cert_fp = config::fingerprint(&moonlight::pem_certs(cert)[0]);
+            let permissions = {
+                let mut st = node.state.lock().unwrap();
+                let same_key = st.settings.moonlight_peers.get(client_fp) == Some(&cert_fp);
+                let permissions = st.peers.iter().find(|p| p.fingerprint == client_fp)
+                    .filter(|_| same_key).map(|p| p.permissions.clone()).unwrap_or_default();
+                st.settings.moonlight_peers.insert(client_fp.to_string(), cert_fp);
+                permissions
+            };
             upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions });
             node.event("in", &name, "moonlight-link", 0, true, "linked through Sunshine pairing");
             Reply { ok: true, name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), ..Default::default() }
         }
         Err(e) => {
-            node.link_limiter.failed();
             node.event("in", &short_fingerprint(client_fp), "moonlight-link", 0, false, format!("{e:#}"));
             Reply::err(format!("{e:#}"))
         }
@@ -343,6 +350,17 @@ async fn read_body<R: AsyncRead + Unpin>(r: &mut R, len: u64) -> Result<Vec<u8>>
 
 fn require_permission(node: &Node, fp: &str, kind: &str) -> Result<()> {
     let peer = node.peer(fp).context("peer is no longer paired")?;
+    let (source, cert_fp) = {
+        let st = node.state.lock().unwrap();
+        (st.settings.moonlight_link.clone(), st.settings.moonlight_peers.get(fp).cloned())
+    };
+    if let Some(cert_fp) = cert_fp {
+        let source = source.context("Moonlight link is off; linked data access is disabled")?;
+        if cert_fp.is_empty() || !moonlight::sunshine_clients(&source)?.iter()
+            .any(|c| config::fingerprint(&c.cert_der) == cert_fp) {
+            bail!("Moonlight client is no longer paired in Sunshine; link and approve it again");
+        }
+    }
     if !peer.permissions.allows(kind) {
         bail!("local client approval required for {kind}");
     }
@@ -380,6 +398,7 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
             Ok(())
         }
         Msg::Channel { channel, name, len, sha256 } => {
+            require_permission(node, fp, "files")?;
             let r = receive_channel(node, s, &settings, fp, &channel, &name, len, &sha256).await;
             match &r {
                 Ok(p) => node.event("in", peer, &format!("channel:{channel}"), len, true, format!("saved {}", p.display())),
@@ -479,7 +498,7 @@ fn notify_owner(host: &str, peer: &str, fp: &str, what: &str) {
         "channel": "remote-access-crew.access-requests",
         "group_key": format!("{}-{}", &fp[..fp.len().min(16)], now()),
         "title": format!("{peer} asks for {what} access"),
-        "body": format!("Remote Access Core (Bridge) on {host}. Approve or deny on the Remote Access Core page, or run: rac approve \"{peer}\""),
+        "body": format!("Remote Access Core (Bridge) on {host}. Approve or deny on the Remote Access Core page, or run: rac approve \"{fp}\""),
         "app": "remote-access-crew",
     });
     let line = format!("{note}\n");
@@ -830,6 +849,7 @@ async fn stream_file<W: AsyncWrite + Unpin>(t: &mut W, p: &Path, len: u64) -> Re
 /// Send one file on an app channel to one peer. The receiver decides whether it accepts
 /// the channel; nothing goes to the clipboard.
 async fn channel_send(node: &Node, fp: &str, channel: &str, path: &Path) -> Result<Value> {
+    require_permission(node, fp, "files")?;
     if !config::valid_channel(channel) {
         bail!("channel names use 1-32 lowercase letters, digits or '-'");
     }
@@ -1272,7 +1292,11 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
         }
         "unpair" => {
             let fp = str_arg(req, "peer")?.to_string();
-            node.state.lock().unwrap().peers.retain(|p| p.fingerprint != fp);
+            {
+                let mut st = node.state.lock().unwrap();
+                st.peers.retain(|p| p.fingerprint != fp);
+                st.settings.moonlight_peers.remove(&fp);
+            }
             node.sync_trust();
             node.save()?;
             Ok(json!({}))

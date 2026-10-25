@@ -100,7 +100,7 @@ fn real_main() -> Result<()> {
                     on_off(&p["permissions"]["clipboard"]), on_off(&p["permissions"]["files"]), list(&p["addrs"]));
             }
             for r in s["access_requests"].as_array().into_iter().flatten() {
-                println!("  PENDING: {} asks for {} access. Run: rac approve \"{}\"", r["name"].as_str().unwrap_or("?"), list(&r["capabilities"]).replace(", ", " and "), r["name"].as_str().unwrap_or("?"));
+                println!("  PENDING: {} asks for {} access. Run: rac approve \"{}\"", r["name"].as_str().unwrap_or("?"), list(&r["capabilities"]).replace(", ", " and "), r["peer"].as_str().unwrap_or("?"));
             }
             println!("Recent transfers:");
             for e in s["events"].as_array().into_iter().flatten().take(15) {
@@ -206,7 +206,7 @@ fn real_main() -> Result<()> {
                 caps = vec!["clipboard", "files"];
             }
             let r = call(json!({"cmd": "request_access", "peer": fp, "capabilities": caps}))?;
-            println!("Asked {} for {} access. Its owner approves or denies it there.", r["peer"].as_str().unwrap_or("?"), list(&r["requested"]).replace(", ", " and "));
+            println!("Local access is approved. Asked {} for {} access; its owner approves or denies it there.", r["peer"].as_str().unwrap_or("?"), list(&r["requested"]).replace(", ", " and "));
             Ok(())
         }
         "approve" | "deny" => {

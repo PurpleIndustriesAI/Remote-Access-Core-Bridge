@@ -139,13 +139,16 @@ async fn moonlight_link_and_channels() {
     let r = call(&other2, json!({"cmd": "send", "text": "sneaky"})).await.unwrap();
     assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
 
-    // The real link works, then clipboard data flows both ways.
+    // Linking proves identity. The host still requires per-device consent.
     let r = call(&client, json!({"cmd": "moonlight_link", "addr": host_addr, "host_fp": host_fp, "moonlight_cert": CERT_PEM, "sig": sig})).await.unwrap();
     assert_eq!(r["fingerprint"].as_str().unwrap(), host_fp);
     let hs = call(&host, json!({"cmd": "status"})).await.unwrap();
     let linked: Vec<&Value> = hs["peers"].as_array().unwrap().iter().filter(|p| p["fingerprint"] == json!(client_fp)).collect();
     assert_eq!(linked.len(), 1, "{hs}");
     assert_eq!(linked[0]["name"], json!("Miku Desktop via Moonlight"));
+    for capability in ["clipboard", "files"] {
+        call(&host, json!({"cmd":"permissions", "peer":client_fp, "capability":capability, "allowed":true})).await.unwrap();
+    }
     call(&client, json!({"cmd": "send", "text": "from client"})).await.unwrap();
     call(&host, json!({"cmd": "send", "peer": client_fp, "text": "from host"})).await.unwrap();
 
@@ -171,11 +174,76 @@ async fn moonlight_link_and_channels() {
     call(&host, json!({"cmd": "set", "moonlight_link": ""})).await.unwrap();
     let err = call(&other, json!({"cmd": "moonlight_link", "addr": host_addr, "host_fp": host_fp, "moonlight_cert": stranger_pem, "sig": osig})).await.unwrap_err();
     assert!(!format!("{err:#}").is_empty());
-    // Already-linked peers keep working.
-    call(&client, json!({"cmd": "send", "text": "still linked"})).await.unwrap();
+    // Disabling linking also blocks data from linked peers.
+    let r = call(&client, json!({"cmd": "send", "text": "link disabled"})).await.unwrap();
+    assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
     // The host can still revoke a linked client's approval, like any other peer's.
     call(&host, json!({"cmd": "permissions", "peer": client_fp, "capability": "clipboard", "allowed": false})).await.unwrap();
     let r = call(&client, json!({"cmd": "send", "text": "after revoke"})).await.unwrap();
     assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn link_security_regressions() {
+    use tokio::io::AsyncReadExt;
+    let root = std::env::temp_dir().join(format!("rac-link-security-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let base = free_base();
+    let state = root.join("sunshine_state.json");
+    sunshine_state(&state, &[CERT_PEM]);
+    let host = node_dir(&root, "host", base + 10, |s| {
+        s.moonlight_link = Some(state.clone());
+        s.channels = vec!["crew-link".into()];
+    });
+    let client = node_dir(&root, "client", base + 20, |_| {});
+    for d in [&host, &client] { start(d); wait_up(d).await; }
+    let hs = call(&host, json!({"cmd":"status"})).await.unwrap();
+    let host_fp = hs["fingerprint"].as_str().unwrap();
+    let m = call(&client, json!({"cmd":"link_message", "host_fp":host_fp})).await.unwrap();
+    let client_fp = m["client_fp"].as_str().unwrap();
+    let link = json!({"cmd":"moonlight_link", "addr":format!("127.0.0.1:{}",base+10),
+        "host_fp":host_fp, "moonlight_cert":CERT_PEM, "sig":rsa_sign(m["message"].as_str().unwrap())});
+    call(&client, link.clone()).await.unwrap();
+    let mut failures = Vec::new();
+    let denied = |r: Value| r["results"][0]["ok"] == json!(false);
+    if !denied(call(&client,json!({"cmd":"send","text":"before consent"})).await.unwrap()) {
+        failures.push("Moonlight pairing granted host clipboard access without peer approval");
+    }
+    for capability in ["clipboard","files"] {
+        call(&host,json!({"cmd":"permissions","peer":client_fp,"capability":capability,"allowed":true})).await.unwrap();
+    }
+    assert!(!denied(call(&client,json!({"cmd":"send","text":"approved"})).await.unwrap()));
+    call(&host,json!({"cmd":"permissions","peer":client_fp,"capability":"clipboard","allowed":false})).await.unwrap();
+    call(&client,link).await.unwrap();
+    if !denied(call(&client,json!({"cmd":"send","text":"after relink"})).await.unwrap()) {
+        failures.push("Relinking restored revoked clipboard approval");
+    }
+    let file = root.join("probe.txt");
+    std::fs::write(&file,b"synthetic channel probe").unwrap();
+    call(&host,json!({"cmd":"permissions","peer":client_fp,"capability":"files","allowed":false})).await.unwrap();
+    let channel = json!({"cmd":"channel_send","peer":host_fp,"channel":"crew-link","path":file});
+    if call(&client,channel.clone()).await.is_ok() { failures.push("Channel bypassed receiver file approval"); }
+    call(&host,json!({"cmd":"permissions","peer":client_fp,"capability":"files","allowed":true})).await.unwrap();
+    call(&client,json!({"cmd":"permissions","peer":host_fp,"capability":"files","allowed":false})).await.unwrap();
+    if call(&client,channel.clone()).await.is_ok() { failures.push("Channel bypassed sender file approval"); }
+    call(&client,json!({"cmd":"permissions","peer":host_fp,"capability":"files","allowed":true})).await.unwrap();
+    call(&host,json!({"cmd":"permissions","peer":client_fp,"capability":"clipboard","allowed":true})).await.unwrap();
+    sunshine_state(&state,&[]);
+    if !denied(call(&client,json!({"cmd":"send","text":"after Sunshine unpair"})).await.unwrap()) {
+        failures.push("Data access survived Sunshine unpairing");
+    }
+    if call(&client,channel).await.is_ok() { failures.push("Channel access survived Sunshine unpairing"); }
+    let arbitrary = root.join("other.json");
+    sunshine_state(&arbitrary,&[CERT_PEM]);
+    if call(&host,json!({"cmd":"set","moonlight_link":arbitrary})).await.is_ok() {
+        failures.push("Moonlight link accepted an arbitrary JSON file");
+    }
+    let mut socket = tokio::net::TcpStream::connect(format!("127.0.0.1:{}",base+10)).await.unwrap();
+    let mut buf=[0u8;1];
+    if tokio::time::timeout(Duration::from_secs(8),socket.read(&mut buf)).await.is_err() {
+        failures.push("Unauthenticated TLS connection held a slot longer than eight seconds");
+    }
+    assert!(failures.is_empty(),"Security regressions: {failures:?}");
 }

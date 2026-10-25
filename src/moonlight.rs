@@ -57,8 +57,33 @@ pub struct PairedClient {
 
 /// Read the clients Sunshine has paired. Only public certificates are read.
 pub fn sunshine_clients(state_path: &Path) -> Result<Vec<PairedClient>> {
-    let raw = std::fs::read(state_path).with_context(|| format!("cannot read {}", state_path.display()))?;
+    use std::io::Read;
+    use std::path::Component;
+    if !state_path.is_absolute() || state_path.file_name().and_then(|n| n.to_str()) != Some("sunshine_state.json")
+        || state_path.components().any(|c| matches!(c, Component::ParentDir)) {
+        bail!("use an absolute local path to sunshine_state.json");
+    }
+    #[cfg(windows)]
+    if !matches!(state_path.components().next(), Some(Component::Prefix(p))
+        if matches!(p.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))) {
+        bail!("Sunshine state must be on a local disk");
+    }
+    for ancestor in state_path.ancestors() {
+        let meta = std::fs::symlink_metadata(ancestor).context("cannot inspect Sunshine state path")?;
+        if meta.file_type().is_symlink() { bail!("Sunshine state path must not contain links"); }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if meta.file_attributes() & 0x400 != 0 { bail!("Sunshine state path must not contain reparse points"); }
+        }
+    }
+    let file = std::fs::File::open(state_path).context("cannot open Sunshine state")?;
+    if !file.metadata()?.is_file() { bail!("Sunshine state must be a regular file"); }
+    let mut raw = Vec::new();
+    file.take(4 * 1024 * 1024 + 1).read_to_end(&mut raw)?;
+    if raw.len() > 4 * 1024 * 1024 { bail!("Sunshine state exceeds 4 MiB"); }
     let v: serde_json::Value = serde_json::from_slice(&raw).context("Sunshine state is not valid JSON")?;
+    if !v["root"]["named_devices"].is_array() { bail!("Sunshine state has no paired-device list"); }
     let mut out = Vec::new();
     for d in v["root"]["named_devices"].as_array().into_iter().flatten() {
         let name = d["name"].as_str().unwrap_or("Moonlight client").to_string();
@@ -96,7 +121,7 @@ pub fn check_link(state_path: &Path, moonlight_cert_pem: &str, sig_hex: &str, se
 
 /// Failed link attempts are limited so an unpaired LAN device cannot hammer the check.
 pub struct Limiter {
-    window: Mutex<(Instant, u32)>,
+    windows: Mutex<std::collections::HashMap<std::net::IpAddr, (Instant, u32)>>,
 }
 
 const WINDOW: Duration = Duration::from_secs(60);
@@ -104,24 +129,21 @@ const MAX_FAILURES: u32 = 10;
 
 impl Default for Limiter {
     fn default() -> Self {
-        Limiter { window: Mutex::new((Instant::now(), 0)) }
+        Limiter { windows: Mutex::new(Default::default()) }
     }
 }
 
 impl Limiter {
-    pub fn allowed(&self) -> bool {
-        let mut w = self.window.lock().unwrap();
-        if w.0.elapsed() > WINDOW {
-            *w = (Instant::now(), 0);
-        }
-        w.1 < MAX_FAILURES
-    }
-    pub fn failed(&self) {
-        let mut w = self.window.lock().unwrap();
-        if w.0.elapsed() > WINDOW {
-            *w = (Instant::now(), 0);
-        }
+    pub fn allowed(&self, ip: std::net::IpAddr) -> bool {
+        let ip = match ip { std::net::IpAddr::V6(v) => v.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(ip), _ => ip };
+        let mut windows = self.windows.lock().unwrap();
+        windows.retain(|_, w| w.0.elapsed() < WINDOW);
+        // Bound memory without evicting a source that has used its allowance.
+        if windows.len() >= 256 && !windows.contains_key(&ip) { return false; }
+        let w = windows.entry(ip).or_insert((Instant::now(), 0));
+        if w.1 >= MAX_FAILURES { return false; }
         w.1 += 1;
+        true
     }
 }
 
@@ -141,9 +163,10 @@ mod tests {
     fn limiter_blocks_after_failures() {
         let l = Limiter::default();
         for _ in 0..MAX_FAILURES {
-            assert!(l.allowed());
-            l.failed();
+            assert!(l.allowed("127.0.0.1".parse().unwrap()));
         }
-        assert!(!l.allowed());
+        assert!(!l.allowed("127.0.0.1".parse().unwrap()));
+        assert!(!l.allowed("::ffff:127.0.0.1".parse().unwrap()));
+        assert!(l.allowed("127.0.0.2".parse().unwrap()));
     }
 }

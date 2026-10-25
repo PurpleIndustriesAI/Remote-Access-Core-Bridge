@@ -182,7 +182,7 @@ export default function RemoteAccessCrew() {
       (!p.permissions?.clipboard || !p.permissions?.files) && h('small', null, 'Both machines must allow an exchange. Ask for access sends a request the other owner approves there.'),
       h('div', { className: 'row' },
         h('button', { disabled, onClick: () => act('ping', { peer: p.fingerprint }, () => `${p.name} is reachable and trusted.`) }, busy === 'ping' ? 'Testing…' : 'Test connection'),
-        h('button', { disabled, onClick: () => act('request-access', { peer: p.fingerprint, capabilities: ['clipboard', 'files'] }, () => `Asked ${p.name} for clipboard and file access. Its owner approves it there.`) }, busy === 'request-access' ? 'Asking…' : 'Ask for access'),
+        h('button', { disabled, onClick: () => act('request-access', { peer: p.fingerprint, capabilities: ['clipboard', 'files'] }, () => `Local clipboard and file access is now approved. Asked ${p.name} for matching access; its owner approves it there.`) }, busy === 'request-access' ? 'Asking…' : 'Allow locally and ask for access'),
         confirmRemove === p.fingerprint
           ? h(React.Fragment, null, h('button', { className: 'danger', disabled, onClick: () => { setConfirmRemove(''); act('unpair', { peer: p.fingerprint }, () => `${p.name} removed. It can no longer connect.`) } }, 'Confirm remove'), h('button', { onClick: () => setConfirmRemove('') }, 'Keep'))
           : h('button', { className: 'danger', disabled, onClick: () => setConfirmRemove(p.fingerprint) }, 'Remove')))))
@@ -247,8 +247,8 @@ export default function RemoteAccessCrew() {
     h('div', { className: 'row spread' },
       h('div', null, h('div', { className: 'name' }, 'Moonlight link (host)'),
         h('small', null, linkOn
-          ? 'On. Remote Access Core (Client) viewers that this host’s Sunshine already paired link with no code and are approved to send this machine clipboard and files. Remove a linked device below to revoke it.'
-          : 'Off. Turning it on lets Remote Access Core (Client) viewers this host’s Sunshine already paired link without a code, and approves them to send this machine clipboard and files.')),
+          ? 'On. Sunshine paired clients can link without a code. Approve clipboard and files for each device below. Access also requires that its Sunshine pairing remains active.'
+          : 'Off. Turning it on lets Sunshine paired clients link without a code. Linking grants no clipboard or file access; approve each device below.')),
       h('span', { className: `chip ${linkOn ? 'ok' : ''}` }, linkOn ? 'On' : 'Off')),
     h('div', { className: 'row', style: { margin: '8px 0 4px' } },
       linkOn

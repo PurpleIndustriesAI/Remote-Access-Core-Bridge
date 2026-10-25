@@ -72,7 +72,7 @@ rac access-requests on|off                  let paired devices ask this machine
 
 Pairing proves identity only. Each machine must also allow a device's **Clipboard** (text and
 images) and **Files** before anything is exchanged. On the device you want to use, choose
-**Ask for access** (or `rac request-access PEER`): that allows the exchange on your side and
+**Allow locally and ask for access** (or `rac request-access PEER`): that allows the exchange on your side and
 asks the other owner, who sees a toast (through Crew's Notification Bridge when installed),
 the request on the Crew page, and `rac status`. Approval lasts until revoked. Turn
 **Allow access requests** off to refuse all requests; the per-device switches still work.

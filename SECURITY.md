@@ -12,12 +12,25 @@ often contains secrets, so the design assumes a hostile local network.
 - **Identity:** each machine generates its own P-256 certificate. Connections use **TLS 1.3
   with mutual authentication**. There is no certificate authority; a peer is trusted only
   if its certificate SHA-256 fingerprint was pinned during pairing. A connection from an
-  unknown certificate is rejected during the handshake.
+  unknown certificate is rejected during the handshake unless pairing or Moonlight linking is open.
+  Those temporary admission paths accept only their identity proof, never clipboard data.
 - **Pairing:** a one-time 80-bit code, open for 5 minutes, single use, closed after 5 wrong
   attempts. Both sides prove knowledge of the code with an HMAC that covers **both**
   certificate fingerprints. A relay that substitutes its own certificate changes a
   fingerprint and cannot produce a valid proof. The code never crosses the network.
 - **Unpairing** removes the pin immediately; that machine can no longer connect.
+- **Moonlight link:** Sunshine pairing proves identity, but each linked peer still needs local
+  clipboard and file approval. Relinking cannot restore a revoked grant. Data checks also
+  verify the original Sunshine certificate remains paired and linking is on. Older automatic
+  grants reset once on upgrade because old labels did not reliably identify their source.
+  Identities and addresses remain intact. Approve ordinary peers again locally. Recognized old
+  Moonlight links also need a fresh link before approval can allow data.
+- **Connection limits:** TLS and the first message share a five second deadline. Link attempts
+  allow ten per source address per minute, including concurrent attempts. The source table holds
+  at most 256 entries. IPv4 and its IPv6 mapped form share one allowance.
+- **Sunshine state:** linking reads an absolute local sunshine_state.json path with no links,
+  a paired-device list, and a four MiB limit. Custom local installations remain supported.
+- **App channels:** a channel must be enabled, and both machines must grant the peer file access.
 
 ## What is sent and stored
 
