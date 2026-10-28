@@ -34,6 +34,25 @@ often contains secrets, so the design assumes a hostile local network.
 
 ## What is sent and stored
 
+Transport consent must be verified on the same pinned TLS connection that carries the payload.
+The receiver requires the verification frame before content, returns a receipt bound to that
+connection, then checks its current policy again before accepting the payload. A sender refuses
+older replies that lack this receipt. There is no automatic compatibility downgrade.
+
+Windows classification uses the kernel interface type and the adapter hardware identity rather
+than the editable friendly name. Linux uses its device subsystem and wireless metadata. Android
+uses network capabilities, with explicit USB and Bluetooth interface hints for downstream tether
+links. Unidentified links are blocked. Tailscale and loopback are explicitly grouped with LAN.
+These controls apply to network links. They do not provide direct USB device redirection or
+Bluetooth peripheral passthrough. Physical USB and Bluetooth acceptance still needs real devices.
+
+The earlier 0.4.2 implementation checked consent on a separate connection and permitted content
+without a verification frame. It also treated unrecognized interface names as WiFi. Regression
+tests reproduced these defects. The source repair rejects unverified payloads, enforces revocation,
+and refuses legacy replies before sending content. Deployment and peer acceptance are separate
+from these source checks. TLS handshake failures require identity and connection evidence; an EOF
+alone does not establish a protocol version mismatch.
+
 - Clipboard content is sent only to paired peers and is **never logged**. Status and logs
   record direction, peer name, type, size, and result only.
 - Windows: content marked private by password managers

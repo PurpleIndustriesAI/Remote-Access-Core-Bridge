@@ -131,6 +131,38 @@ mod consent_tests {
     fn older_settings_allow_access_requests() {
         let s: Settings = serde_json::from_str(r#"{"port":48765}"#).unwrap();
         assert!(s.allow_access_requests);
+        assert!(s.transport.allows("wifi"));
+        assert!(!s.transport.allows("usb"));
+        assert!(!s.transport.allows("bluetooth"));
+        assert!(!s.transport.allows("unknown"));
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TransportPolicy {
+    /// Ordinary WiFi, Ethernet, loopback, and Tailscale links.
+    pub wifi: bool,
+    /// An existing USB tether or USB accessory network link.
+    pub usb: bool,
+    /// An existing Bluetooth personal area network link.
+    pub bluetooth: bool,
+}
+
+impl Default for TransportPolicy {
+    fn default() -> Self {
+        TransportPolicy { wifi: true, usb: false, bluetooth: false }
+    }
+}
+
+impl TransportPolicy {
+    pub fn allows(&self, transport: &str) -> bool {
+        match transport {
+            "wifi" => self.wifi,
+            "usb" => self.usb,
+            "bluetooth" => self.bluetooth,
+            _ => false,
+        }
     }
 }
 
@@ -161,6 +193,8 @@ pub struct Settings {
     pub max_channel_bytes: u64,
     /// Let paired devices ask for clipboard and file access. Off refuses every request.
     pub allow_access_requests: bool,
+    /// Both peers must allow the actual link before any content is exchanged.
+    pub transport: TransportPolicy,
 }
 
 /// Channel names are short lowercase words so they are safe as folder names.
@@ -192,6 +226,7 @@ impl Default for Settings {
             channels: Vec::new(),
             max_channel_bytes: 64 * 1024 * 1024,
             allow_access_requests: true,
+            transport: TransportPolicy::default(),
         }
     }
 }

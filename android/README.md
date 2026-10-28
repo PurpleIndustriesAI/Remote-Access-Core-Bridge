@@ -16,6 +16,10 @@ bridge, so a phone pairs with a computer exactly like a second computer does.
 - **Remote desktop:** **Open the stream** starts Moonlight Fold (`com.limelight.fold`), the phone
   streaming client with Keys, zoom and pan, and Windows key controls. It is a separate,
   GPL-licensed app in its own repository; this app only launches it.
+- **Connection sharing:** WiFi and LAN stays on by default. USB and connected accessories and
+  Bluetooth start off. Both ends must allow the detected transport before every transfer, and
+  unidentified transports fail closed. RAC uses the existing network link and never changes an
+  adapter, tethering or radio setting.
 
 ## Security
 

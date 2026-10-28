@@ -43,6 +43,11 @@ public final class RacTest {
         check("LAN, Tailscale and loopback are allowed", ok("192.168.0.159") && ok("10.1.2.3") && ok("172.16.0.1") && ok("100.99.1.2")
                 && ok("127.0.0.1") && ok("fd7a:115c:a1e0::1") && ok("fe80::1") && ok("fd00::1"));
         check("public addresses are refused", !ok("8.8.8.8") && !ok("100.128.0.1") && !ok("2001:4860::8888") && !ok("1.1.1.1"));
+        check("transport names match the desktop", Rac.transportName("rndis0").equals("usb")
+                && Rac.transportName("Bluetooth Network Connection").equals("bluetooth")
+                && Rac.transportName("Ethernet 2").equals("wifi"));
+        check("unidentified adapters are refused", Rac.transportName("mystery0").equals("unknown")
+                && Rac.transportName("tun0").equals("unknown"));
 
         check("short fingerprint matches the desktop format", Rac.shortFp("50e7f03684b968214f2f5242aaaa").equals("50E7-F036-84B9-6821-4F2F-5242"));
         check("peer names are cleaned like the desktop", Rac.cleanName("  Fold<script>2  ").equals("Foldscript2") && Rac.cleanName("***").equals("peer"));

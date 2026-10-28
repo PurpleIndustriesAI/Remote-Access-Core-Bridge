@@ -47,6 +47,89 @@ fn start(dir: &Path) {
     });
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn transport_consent_is_bound_to_the_payload_connection() {
+    use rac::{proto::{self, Msg, Reply}, tls};
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpStream;
+    use tokio_rustls::TlsConnector;
+
+    let root = std::env::temp_dir().join(format!("rac-transport-{}", std::process::id()));
+    let base = free_base();
+    let a = node_dir(&root, "a", base + 10);
+    let b = node_dir(&root, "b", base + 20);
+    start(&a);
+    start(&b);
+    wait_up(&a).await;
+    wait_up(&b).await;
+    let addr = format!("127.0.0.1:{}", base + 10);
+    let code = call(&a, json!({"cmd":"pair_code"})).await.unwrap()["code"].as_str().unwrap().to_owned();
+    let paired = call(&b, json!({"cmd":"pair", "addr":addr, "code":code})).await.unwrap();
+    let fp = paired["fingerprint"].as_str().unwrap().to_owned();
+    let status = call(&a, json!({"cmd":"status"})).await.unwrap();
+    let b_fp = status["peers"][0]["fingerprint"].as_str().unwrap();
+    call(&a, json!({"cmd":"permissions", "peer":b_fp, "capability":"clipboard", "allowed":true})).await.unwrap();
+    let id = config::load_or_create_identity(&b).unwrap();
+    let connector = TlsConnector::from(tls::client_config(&id, Some(fp)).unwrap());
+
+    // A paired client must not bypass transport consent by sending content first.
+    let socket = TcpStream::connect(&addr).await.unwrap();
+    let mut stream = connector.connect(tls::server_name(), socket).await.unwrap();
+    proto::write_json(&mut stream, &Msg::Text { len: 4 }).await.unwrap();
+    stream.write_all(b"test").await.unwrap();
+    let reply: Reply = proto::read_json(&mut stream).await.unwrap();
+    assert!(!reply.ok, "unverified content was accepted");
+
+    for revoke in [true, false] {
+        call(&a, json!({"cmd":"set", "transport_wifi":true})).await.unwrap();
+        let socket = TcpStream::connect(&addr).await.unwrap();
+        let mut stream = connector.connect(tls::server_name(), socket).await.unwrap();
+        proto::write_json(&mut stream, &Msg::VerifyTransport {
+            transport: "wifi".into(), policy: Default::default(),
+        }).await.unwrap();
+        let reply: Value = proto::read_json(&mut stream).await.unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["transport_session"], "wifi", "missing connection bound receipt");
+        if revoke {
+            call(&a, json!({"cmd":"set", "transport_wifi":false})).await.unwrap();
+        }
+        proto::write_json(&mut stream, &Msg::Text { len: 4 }).await.unwrap();
+        stream.write_all(b"test").await.unwrap();
+        let reply: Reply = proto::read_json(&mut stream).await.unwrap();
+        assert_eq!(reply.ok, !revoke, "policy revocation was not enforced");
+    }
+
+    // A legacy preflight reply must not trigger a second connection or a payload.
+    let c = node_dir(&root, "c", base + 30);
+    let client_id = config::load_or_create_identity(&c).unwrap();
+    let server_id = config::load_or_create_identity(&a).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let legacy_addr = listener.local_addr().unwrap().to_string();
+    let trust = std::sync::Arc::new(tls::Trust::default());
+    trust.peers.write().unwrap().insert(client_id.fingerprint.clone());
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls::server_config(&server_id, trust).unwrap());
+    let mut state = config::load_state(&c).unwrap();
+    state.peers.push(config::Peer {
+        name: "legacy fixture".into(), fingerprint: server_id.fingerprint.clone(),
+        addrs: vec![legacy_addr], autosync: false, paired_at: 0, permissions: Default::default(),
+    });
+    config::save_state(&c, &state).unwrap();
+    let legacy = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut stream = acceptor.accept(socket).await.unwrap();
+        let message: Msg = proto::read_json(&mut stream).await.unwrap();
+        assert!(matches!(message, Msg::VerifyTransport { .. }));
+        proto::write_json(&mut stream, &json!({"ok":true,"policy":{"wifi":true,"usb":false,"bluetooth":false}})).await.unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(2), proto::read_json::<_, Msg>(&mut stream)).await;
+        assert!(matches!(next, Ok(Err(_))), "client sent content or kept an unverified stream open");
+    });
+    start(&c);
+    wait_up(&c).await;
+    let error = call(&c, json!({"cmd":"ping", "peer":server_id.fingerprint})).await.unwrap_err();
+    assert!(format!("{error:#}").contains("payload connection"), "{error:#}");
+    legacy.await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pair_send_and_reject() {
     let root = std::env::temp_dir().join(format!("rac-e2e-{}", std::process::id()));
@@ -103,6 +186,17 @@ async fn pair_send_and_reject() {
     call(&b, json!({"cmd": "send", "text": "hello from b"})).await.unwrap();
     call(&a, json!({"cmd": "send", "peer": b_fp, "text": "hello from a"})).await.unwrap();
     call(&a, json!({"cmd": "ping", "peer": b_fp})).await.unwrap();
+
+    // Either machine can block the actual transport. Both directions fail closed and recover.
+    call(&a, json!({"cmd": "set", "transport_wifi": false})).await.unwrap();
+    let denied = call(&b, json!({"cmd": "send", "text": "blocked by receiver"})).await.unwrap();
+    assert_eq!(denied["results"][0]["ok"], json!(false), "{denied}");
+    call(&a, json!({"cmd": "set", "transport_wifi": true})).await.unwrap();
+    call(&b, json!({"cmd": "set", "transport_wifi": false})).await.unwrap();
+    let denied = call(&a, json!({"cmd": "send", "peer": b_fp, "text": "blocked by sender"})).await.unwrap();
+    assert_eq!(denied["results"][0]["ok"], json!(false), "{denied}");
+    call(&b, json!({"cmd": "set", "transport_wifi": true})).await.unwrap();
+    call(&a, json!({"cmd": "send", "peer": b_fp, "text": "allowed again"})).await.unwrap();
 
     // Network helper: latency probe and two-way speed test over the paired link.
     let p = call(&a, json!({"cmd": "probe", "peer": b_fp, "n": 10})).await.unwrap();

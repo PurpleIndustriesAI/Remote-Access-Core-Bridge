@@ -3,8 +3,8 @@
 1 ICON "remote-access-crew.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,4,1,0
-PRODUCTVERSION 0,4,1,0
+FILEVERSION 0,4,3,0
+PRODUCTVERSION 0,4,3,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -15,8 +15,8 @@ BEGIN
       VALUE "CompanyName", "Purple Industries"
       VALUE "FileDescription", "Remote Access Core (Bridge)"
       VALUE "ProductName", "Remote Access Core (Bridge)"
-      VALUE "FileVersion", "0.4.1"
-      VALUE "ProductVersion", "0.4.1"
+      VALUE "FileVersion", "0.4.3"
+      VALUE "ProductVersion", "0.4.3"
       VALUE "LegalCopyright", "Copyright (c) 2026 Purple Industries. All rights reserved."
     END
   END

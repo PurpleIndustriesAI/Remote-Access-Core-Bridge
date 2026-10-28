@@ -356,6 +356,66 @@ final class Rac {
         }
     }
 
+    // ------------------------------------------------------------------ transport consent
+
+    static String transportName(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        if (n.contains("rndis") || n.contains("usb") || n.contains("ncm") || n.contains("cdc")) return "usb";
+        if (n.contains("bluetooth") || n.contains("bnep") || n.contains("bt-pan") || n.contains("btpan")) return "bluetooth";
+        if (n.startsWith("wlan") || n.startsWith("wifi") || n.startsWith("wi-fi") || n.startsWith("ethernet")
+                || n.startsWith("eth") || n.startsWith("enp") || n.startsWith("eno")) return "wifi";
+        return "unknown";
+    }
+
+    static String transport(Context ctx, Socket socket) {
+        InetAddress local = socket.getLocalAddress();
+        if (local != null && (local.isLoopbackAddress() || tailscale(local))) return "wifi";
+        try {
+            android.net.ConnectivityManager manager = ctx.getSystemService(android.net.ConnectivityManager.class);
+            if (manager != null) for (android.net.Network network : manager.getAllNetworks()) {
+                android.net.LinkProperties link = manager.getLinkProperties(network);
+                android.net.NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+                if (link == null || caps == null) continue;
+                boolean matched = false;
+                for (android.net.LinkAddress address : link.getLinkAddresses()) {
+                    if (address.getAddress().equals(local)) matched = true;
+                }
+                if (!matched) continue;
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_USB)) return "usb";
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_BLUETOOTH)) return "bluetooth";
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) return "unknown";
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                        || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) return "wifi";
+                return "unknown";
+            }
+            // A downstream tether may not be listed as an Android upstream Network.
+            NetworkInterface iface = NetworkInterface.getByInetAddress(local);
+            String hint = iface == null ? "unknown" : transportName(iface.getName());
+            if ("usb".equals(hint) || "bluetooth".equals(hint)) return hint;
+        } catch (Exception ignored) {
+            // An unidentified link must not inherit the ordinary WiFi/LAN permission.
+        }
+        return "unknown";
+    }
+
+    static JSONObject transportPolicy(Context ctx) throws JSONException {
+        SharedPreferences p = prefs(ctx);
+        return new JSONObject()
+                .put("wifi", p.getBoolean("transport_wifi", true))
+                .put("usb", p.getBoolean("transport_usb", false))
+                .put("bluetooth", p.getBoolean("transport_bluetooth", false));
+    }
+
+    static boolean transportAllowed(JSONObject policy, String transport) {
+        return ("wifi".equals(transport) || "usb".equals(transport) || "bluetooth".equals(transport))
+                && policy.optBoolean(transport, false);
+    }
+
+    static void setTransportAllowed(Context ctx, String transport, boolean allowed) {
+        if (!"wifi".equals(transport) && !"usb".equals(transport) && !"bluetooth".equals(transport)) return;
+        prefs(ctx).edit().putBoolean("transport_" + transport, allowed).apply();
+    }
+
     // ------------------------------------------------------------------ peers
 
     static final class Peer {

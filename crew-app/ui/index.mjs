@@ -239,6 +239,19 @@ export default function RemoteAccessCrew() {
     h('label', null, 'Files or folders on this machine (one path per line)', h('textarea', { value: paths, onChange: e => setPaths(e.target.value), placeholder: 'C:\\Users\\you\\Documents\\report.pdf', style: { minHeight: 60 } })),
     h('div', { className: 'row', style: { marginTop: 8 } }, h('button', { disabled: disabled || !peers.length || !paths.trim(), onClick: () => act('send', { ...sendTo, paths: paths.split('\n').map(s => s.trim()).filter(Boolean) }).then(() => setPaths('')) }, 'Send files')))
 
+  const transport = data?.settings?.transport || { wifi: true, usb: false, bluetooth: false }
+  const sharing = h('div', { className: 'card' },
+    h('h2', null, 'Connection sharing'),
+    h('p', null, 'Both machines must allow the active link. RAC verifies the settings again before every transfer. USB and Bluetooth use the network link already provided by the devices; RAC never changes adapter or radio settings.'),
+    ...[['wifi', 'WiFi and LAN'], ['usb', 'USB and connected accessories'], ['bluetooth', 'Bluetooth']].map(([key, label]) =>
+      h('div', { key, className: 'row spread', style: { marginTop: 8 } },
+        h('div', { className: 'name' }, label),
+        h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: !!transport[key], disabled,
+          'aria-label': `${label} sharing on this machine`,
+          onChange: e => act('set', { [`transport_${key}`]: e.target.checked }, () => `${label} sharing ${e.target.checked ? 'allowed' : 'blocked'} on this machine.`) }),
+          transport[key] ? 'On' : 'Off'))),
+    h('small', { style: { marginTop: 10 } }, 'USB and Bluetooth start off. Turn them on only while using that kind of link.'))
+
   const linkOn = !!data?.settings?.moonlight_link
   const channels = data?.settings?.channels || []
   const crewLinkOn = channels.includes('crew-link')
@@ -278,7 +291,7 @@ export default function RemoteAccessCrew() {
     error && h('div', { className: 'alert', role: 'alert' }, error),
     notice && h('div', { className: 'notice', role: 'status' }, notice),
     h('div', { className: 'grid' },
-      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, streaming),
+      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, sharing, streaming),
       h('div', null, network, sendCard, activity)))
 }
 

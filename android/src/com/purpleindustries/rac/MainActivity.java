@@ -79,6 +79,13 @@ public final class MainActivity extends Activity {
         stream.addView(text("Streams the computer's screen with phone controls: Keys, zoom and pan, and the Windows key.", 14, MUTED));
         stream.addView(button("Open the stream", v -> openStream()));
 
+        LinearLayout sharing = panel("Connection sharing");
+        sharing.addView(text("Both devices must allow the active link. RAC verifies this before every transfer. "
+                + "USB and Bluetooth use the network link already provided by the devices; no adapter or radio setting is changed.", 14, MUTED));
+        sharing.addView(transportSwitch("wifi", "WiFi and LAN"));
+        sharing.addView(transportSwitch("usb", "USB and connected accessories"));
+        sharing.addView(transportSwitch("bluetooth", "Bluetooth"));
+
         LinearLayout pair = panel("Pair a computer");
         pair.addView(text("On the computer run: rac pair-code\nThen enter its address and the code within 5 minutes.", 14, MUTED));
         EditText addr = field("Computer address, e.g. 192.168.0.159 or a Tailscale 100.x address", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -255,6 +262,21 @@ public final class MainActivity extends Activity {
         lp.topMargin = dp(10);
         b.setLayoutParams(lp);
         return b;
+    }
+
+    private Switch transportSwitch(String transport, String label) {
+        Switch s = new Switch(this);
+        s.setText(label);
+        s.setTextColor(TEXT);
+        s.setTextSize(15);
+        s.setPadding(0, dp(10), 0, 0);
+        try { s.setChecked(Rac.transportPolicy(this).optBoolean(transport, false)); }
+        catch (org.json.JSONException ignored) { s.setChecked(false); }
+        s.setOnCheckedChangeListener((b, on) -> {
+            Rac.setTransportAllowed(this, transport, on);
+            Transfer.log(label + " sharing " + (on ? "allowed" : "blocked") + " on this phone");
+        });
+        return s;
     }
 
     private EditText field(String hint, int type) {

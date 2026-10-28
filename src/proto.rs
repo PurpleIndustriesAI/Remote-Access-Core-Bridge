@@ -1,5 +1,6 @@
 //! Wire framing, the pairing proof, and safe path handling for received files.
 
+use crate::config::TransportPolicy;
 use anyhow::{Result, bail};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,8 @@ pub enum Msg {
     /// A paired device asks this machine's owner for clipboard and/or file access.
     /// It never grants anything by itself; the owner approves or denies locally.
     AccessRequest { capabilities: Vec<String> },
+    /// Both peers prove their local transport consent before any content is sent.
+    VerifyTransport { transport: String, policy: TransportPolicy },
 }
 
 pub const MAX_ECHO: u32 = 200;
@@ -54,6 +57,11 @@ pub struct Reply {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addrs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<TransportPolicy>,
+    /// A successful transport check authorizes the next frame on this TLS connection only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport_session: Option<String>,
 }
 
 impl Reply {

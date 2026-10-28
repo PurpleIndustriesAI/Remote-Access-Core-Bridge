@@ -213,7 +213,7 @@ async fn accept_loop(node: Arc<Node>, l: TcpListener) {
 
 async fn handle_peer(node: Arc<Node>, sock: TcpStream, addr: SocketAddr) -> Result<()> {
     let _ = sock.set_nodelay(true);
-    let (mut tls, fp, msg) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (mut tls, fp, mut msg) = tokio::time::timeout(Duration::from_secs(5), async {
         let mut tls = node.acceptor.accept(sock).await?;
         let c = tls.get_ref().1.peer_certificates().and_then(|c| c.first()).context("no client certificate")?;
         let fp = config::fingerprint(c);
@@ -236,6 +236,45 @@ async fn handle_peer(node: Arc<Node>, sock: TcpStream, addr: SocketAddr) -> Resu
     if !known {
         proto::write_json(&mut tls, &Reply::err("not paired")).await?;
         bail!("unpaired certificate tried {}", short_fingerprint(&fp));
+    }
+    let actual = net::transport_for(&tls.get_ref().0.local_addr()?.ip());
+    if let Msg::VerifyTransport { transport, policy } = &msg {
+        let local = node.state.lock().unwrap().settings.transport.clone();
+        let result = if actual != transport.as_str() {
+            Err(anyhow!("transport identification mismatch"))
+        } else if !local.allows(actual) {
+            Err(anyhow!("this machine has {actual} sharing off"))
+        } else if !policy.allows(actual) {
+            Err(anyhow!("the other machine has {actual} sharing off"))
+        } else {
+            Ok(())
+        };
+        let mut reply = match &result {
+            Ok(()) => Reply::ok(),
+            Err(e) => Reply::err(format!("{e:#}")),
+        };
+        reply.policy = Some(local);
+        reply.transport_session = result.is_ok().then(|| actual.to_string());
+        proto::write_json(&mut tls, &reply).await?;
+        result?;
+    } else {
+        proto::write_json(&mut tls, &Reply::err("transport verification required on this connection; update the peer")).await?;
+        tls.shutdown().await.ok();
+        bail!("content arrived without transport verification");
+    }
+    msg = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut tls)).await
+        .context("verified peer did not send a payload header")??;
+    if matches!(msg, Msg::Pair { .. } | Msg::MoonlightLink { .. } | Msg::VerifyTransport { .. }) {
+        proto::write_json(&mut tls, &Reply::err("expected one payload after transport verification")).await?;
+        bail!("unexpected authentication frame after verification");
+    }
+    if !node.trust.is_peer(&fp)
+        || net::transport_for(&tls.get_ref().0.local_addr()?.ip()) != actual
+        || !node.state.lock().unwrap().settings.transport.allows(actual) {
+        let reply = Reply::err(format!("this machine has {actual} sharing off"));
+        proto::write_json(&mut tls, &reply).await.ok();
+        tls.shutdown().await.ok();
+        bail!("refused {actual} content because sharing is off");
     }
     node.learn_addr(&fp, addr.ip());
     let peer = node.peer_name(&fp);
@@ -277,7 +316,7 @@ fn accept_pairing(node: &Node, client_fp: &str, addr: SocketAddr, proof: &str, n
     node.state.lock().unwrap().settings.moonlight_peers.remove(client_fp);
     upsert_peer(node, Peer { name: name.clone(), fingerprint: client_fp.to_string(), addrs: list, autosync: true, paired_at: now(), permissions: Default::default() });
     node.event("in", &name, "pair", 0, true, "paired");
-    Reply { ok: true, proof: Some(server_proof), name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), error: None }
+    Reply { ok: true, proof: Some(server_proof), name: Some(node.name.clone()), addrs: net::local_addrs(node.port()), ..Default::default() }
 }
 
 /// Peer addresses from a reply or request: the address it reached us from first, then any
@@ -371,7 +410,7 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
     let settings = node.state.lock().unwrap().settings.clone();
     match msg {
         Msg::Ping => Ok(()),
-        Msg::Pair { .. } | Msg::MoonlightLink { .. } => unreachable!(),
+        Msg::Pair { .. } | Msg::MoonlightLink { .. } | Msg::VerifyTransport { .. } => unreachable!(),
         Msg::AccessRequest { capabilities } => {
             if !settings.allow_access_requests {
                 node.event("in", peer, "access-request", 0, false, "refused: access requests are off");
@@ -890,8 +929,35 @@ async fn channel_send(node: &Node, fp: &str, channel: &str, path: &Path) -> Resu
     Ok(json!({"peer": peer.name, "bytes": len, "sha256": sha256}))
 }
 
+async fn verify_transport(node: &Node, peer: &Peer, t: &mut tokio_rustls::client::TlsStream<TcpStream>) -> Result<()> {
+    let transport = net::transport_for(&t.get_ref().0.local_addr()?.ip());
+    let policy = node.state.lock().unwrap().settings.transport.clone();
+    if !policy.allows(transport) {
+        bail!("this machine has {transport} sharing off");
+    }
+    proto::write_json(t, &Msg::VerifyTransport { transport: transport.to_string(), policy }).await?;
+    let reply: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(t)).await??;
+    if !reply.ok {
+        bail!("{} declined {transport} sharing: {}", peer.name, reply.error.unwrap_or_default());
+    }
+    let remote = reply.policy.context("the peer needs an update that supports mutual transport verification")?;
+    if reply.transport_session.as_deref() != Some(transport) {
+        bail!("{} needs an update supporting transport verification on the payload connection", peer.name);
+    }
+    if !remote.allows(transport) {
+        bail!("{} has {transport} sharing off", peer.name);
+    }
+    if !node.state.lock().unwrap().settings.transport.allows(transport)
+        || net::transport_for(&t.get_ref().0.local_addr()?.ip()) != transport {
+        bail!("local transport permission changed during verification");
+    }
+    node.event("out", &peer.name, "transport", 0, true, format!("{transport} verified on both machines"));
+    Ok(())
+}
+
 async fn deliver(node: &Node, peer: &Peer, out: &Outgoing) -> Result<()> {
     let (mut t, addr) = connect(node, peer).await?;
+    verify_transport(node, peer, &mut t).await?;
     proto::write_json(&mut t, &out.msg).await?;
     if matches!(out.msg, Msg::Channel { .. }) {
         // The receiver accepts or refuses the header before any body bytes are sent.
@@ -975,6 +1041,7 @@ async fn probe(node: &Node, fp: &str, n: u32) -> Result<Value> {
     let peer = node.peer(fp).context("unknown peer")?;
     let n = n.clamp(5, proto::MAX_ECHO);
     let (mut t, addr) = connect(node, &peer).await?;
+    verify_transport(node, &peer, &mut t).await?;
     proto::write_json(&mut t, &Msg::Echo { n }).await?;
     let mut rtts = Vec::with_capacity(n as usize);
     let mut f = [0u8; 8];
@@ -1009,6 +1076,7 @@ async fn speedtest(node: &Node, fp: &str, mib: u64) -> Result<Value> {
     let peer = node.peer(fp).context("unknown peer")?;
     let bytes = mib.clamp(4, 128) * 1024 * 1024;
     let (mut t, addr) = connect(node, &peer).await?;
+    verify_transport(node, &peer, &mut t).await?;
     proto::write_json(&mut t, &Msg::Bench { up: bytes, down: bytes }).await?;
     let buf = vec![0xa5u8; COPY_BUF];
     let start = Instant::now();
@@ -1340,6 +1408,15 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
                 }
                 if let Some(b) = req.get("allow_access_requests").and_then(|v| v.as_bool()) {
                     st.settings.allow_access_requests = b;
+                }
+                if let Some(b) = req.get("transport_wifi").and_then(|v| v.as_bool()) {
+                    st.settings.transport.wifi = b;
+                }
+                if let Some(b) = req.get("transport_usb").and_then(|v| v.as_bool()) {
+                    st.settings.transport.usb = b;
+                }
+                if let Some(b) = req.get("transport_bluetooth").and_then(|v| v.as_bool()) {
+                    st.settings.transport.bluetooth = b;
                 }
                 if let Some(arr) = req.get("channels").and_then(|v| v.as_array()) {
                     let list: Vec<String> = arr.iter().filter_map(|v| v.as_str()).map(String::from).collect();

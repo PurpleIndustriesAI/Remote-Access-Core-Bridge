@@ -22,7 +22,7 @@ $tool = { param($n) Join-Path $bt.FullName $n }
 
 Run (& $tool 'aapt2.exe') compile --dir (Join-Path $PSScriptRoot 'res') -o "$work\res.zip"
 Run (& $tool 'aapt2.exe') link -I $jar --manifest (Join-Path $PSScriptRoot 'AndroidManifest.xml') `
-    --min-sdk-version 34 --target-sdk-version 36 --version-code 1 --version-name 0.3.0 `
+    --min-sdk-version 34 --target-sdk-version 36 --version-code 3 --version-name 0.4.3 `
     --java "$work\gen" -o "$work\base.apk" "$work\res.zip"
 $sources = @(Get-ChildItem (Join-Path $PSScriptRoot 'src'), "$work\gen" -Recurse -Filter *.java | ForEach-Object FullName)
 Run javac -source 17 -target 17 -encoding UTF-8 '-Xlint:-options' -Werror -cp $jar -d "$work\classes" @sources

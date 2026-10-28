@@ -172,6 +172,24 @@ final class Transfer {
         return ok;
     }
 
+    private static void verifyTransport(Context ctx, Rac.Peer p, SSLSocket s) throws Exception {
+        String transport = Rac.transport(ctx, s);
+        JSONObject policy = Rac.transportPolicy(ctx);
+        if (!Rac.transportAllowed(policy, transport)) throw new IOException("this phone has " + transport + " sharing off");
+        Rac.writeJson(s.getOutputStream(), new JSONObject().put("t", "verify_transport")
+                .put("transport", transport).put("policy", policy));
+        JSONObject r = Rac.readJson(s.getInputStream());
+        if (!r.optBoolean("ok")) throw new IOException(p.name + " declined " + transport + " sharing: " + r.optString("error"));
+        JSONObject remote = r.optJSONObject("policy");
+        if (remote == null) throw new IOException(p.name + " needs an update that supports mutual transport verification");
+        if (!transport.equals(r.optString("transport_session")))
+            throw new IOException(p.name + " needs an update supporting verification on the payload connection");
+        if (!Rac.transportAllowed(remote, transport)) throw new IOException(p.name + " has " + transport + " sharing off");
+        if (!Rac.transportAllowed(Rac.transportPolicy(ctx), transport) || !transport.equals(Rac.transport(ctx, s)))
+            throw new IOException("local transport permission changed during verification");
+        log(transport + " verified on both devices with " + p.name);
+    }
+
     private static void deliver(Context ctx, Rac.Peer p, Outgoing o) throws Exception {
         Set<String> pin = Collections.singleton(p.fingerprint);
         Exception last = new IOException("no address known for " + p.name);
@@ -184,6 +202,12 @@ final class Transfer {
                 continue;
             }
             try (SSLSocket s = t) {
+                try {
+                    verifyTransport(ctx, p, s);
+                } catch (Exception e) {
+                    last = e;
+                    continue;
+                }
                 OutputStream out = s.getOutputStream();
                 Rac.writeJson(out, o.msg);
                 if (o.bytes != null) out.write(o.bytes);
@@ -238,6 +262,23 @@ final class Transfer {
         String t = msg.optString("t");
         String err = null;
         try {
+            String actual = Rac.transport(ctx, s);
+            JSONObject local = Rac.transportPolicy(ctx);
+            if ("verify_transport".equals(t)) {
+                String claimed = msg.optString("transport");
+                JSONObject remote = msg.optJSONObject("policy");
+                if (!actual.equals(claimed)) err = "transport identification mismatch";
+                else if (!Rac.transportAllowed(local, actual)) err = "this phone has " + actual + " sharing off";
+                else if (remote == null || !Rac.transportAllowed(remote, actual)) err = "the computer has " + actual + " sharing off";
+            } else err = "transport verification required on this connection; update the peer";
+            if (err != null) throw new IOException(err);
+            Rac.writeJson(s.getOutputStream(), Rac.reply(true, null).put("policy", local).put("transport_session", actual));
+            msg = Rac.readJson(s.getInputStream());
+            t = msg.optString("t");
+            if (Rac.peers(ctx).stream().noneMatch(p -> p.fingerprint.equals(fp)))
+                throw new IOException("peer was unpaired before delivery");
+            if (!actual.equals(Rac.transport(ctx, s)) || !Rac.transportAllowed(Rac.transportPolicy(ctx), actual))
+                throw new IOException("transport permission changed before delivery");
             switch (t) {
                 case "ping":
                     break;
@@ -261,7 +302,8 @@ final class Transfer {
             log("Rejected " + t + " from " + peer + ": " + err);
         }
         Rac.learn(ctx, fp, s.getInetAddress());
-        Rac.writeJson(s.getOutputStream(), Rac.reply(err == null, err));
+        JSONObject reply = Rac.reply(err == null, err);
+        Rac.writeJson(s.getOutputStream(), reply);
     }
 
     private static byte[] body(InputStream in, long len, long max, String what) throws IOException {
