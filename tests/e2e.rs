@@ -233,7 +233,7 @@ async fn pair_send_and_reject() {
 
     // An unpaired machine that pins A's identity is rejected during the TLS handshake.
     let mut st = config::load_state(&c).unwrap();
-    st.peers.push(config::Peer { name: "a".into(), fingerprint: a_fp.clone(), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard:true, files:true } });
+    st.peers.push(config::Peer { name: "a".into(), fingerprint: a_fp.clone(), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard:true, files:true, ..Default::default() } });
     config::save_state(&c, &st).unwrap();
     // C loaded its state at start, so restart is not possible in-process; use a fresh node D instead.
     let d = node_dir(&root, "d", base + 40);
@@ -248,7 +248,7 @@ async fn pair_send_and_reject() {
     // A peer that pins the wrong fingerprint for A refuses to talk to it.
     let e = node_dir(&root, "e", base + 50);
     let mut st = config::load_state(&e).unwrap();
-    st.peers.push(config::Peer { name: "fake".into(), fingerprint: "00".repeat(32), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard:true, files:true } });
+    st.peers.push(config::Peer { name: "fake".into(), fingerprint: "00".repeat(32), addrs: vec![a_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard:true, files:true, ..Default::default() } });
     config::save_state(&e, &st).unwrap();
     start(&e);
     wait_up(&e).await;
@@ -271,6 +271,47 @@ async fn pair_send_and_reject() {
     let r = call(&b, json!({"cmd": "send", "text": "after unpair"})).await.unwrap();
     assert_eq!(r["results"][0]["ok"], json!(false), "{r}");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn device_inventory_requires_separate_client_consent() {
+    let root = std::env::temp_dir().join(format!("racdevices{}", std::process::id()));
+    let base = free_base();
+    let host = node_dir(&root, "host", base + 40);
+    let client = node_dir(&root, "client", base + 50);
+    start(&host);
+    start(&client);
+    wait_up(&host).await;
+    wait_up(&client).await;
+    let code = call(&host, json!({"cmd":"pair_code"})).await.unwrap()["code"].as_str().unwrap().to_owned();
+    let host_fp = call(&client, json!({"cmd":"pair", "addr":format!("127.0.0.1:{}",base+40), "code":code})).await.unwrap()["fingerprint"].as_str().unwrap().to_owned();
+    let client_fp = call(&host, json!({"cmd":"status"})).await.unwrap()["peers"][0]["fingerprint"].as_str().unwrap().to_owned();
+    let denied = call(&client, json!({"cmd":"devices", "peer":host_fp})).await.unwrap_err();
+    assert!(format!("{denied:#}").contains("local client approval"));
+    assert!(call(&client, json!({"cmd":"request_access", "peer":host_fp, "capabilities":["device_inventory", 1]})).await.is_err());
+    call(&host, json!({"cmd":"set", "allow_access_requests":false})).await.unwrap();
+    assert!(call(&client, json!({"cmd":"request_access", "peer":host_fp, "capabilities":["device_inventory"]})).await.is_err());
+    assert!(!config::load_state(&client).unwrap().peers[0].permissions.device_inventory);
+    // Existing clipboard and file consent must never authorize hardware inspection.
+    for capability in ["clipboard", "files"] {
+        call(&host, json!({"cmd":"permissions", "peer":client_fp, "capability":capability, "allowed":true})).await.unwrap();
+    }
+    assert!(call(&client, json!({"cmd":"devices", "peer":host_fp})).await.is_err());
+    call(&host, json!({"cmd":"permissions", "peer":client_fp, "capability":"device_inventory", "allowed":true})).await.unwrap();
+    assert!(config::load_state(&host).unwrap().peers[0].permissions.device_inventory);
+    assert!(!config::load_state(&client).unwrap().peers[0].permissions.device_inventory);
+    #[cfg(windows)]
+    {
+        let report = call(&client, json!({"cmd":"devices", "peer":host_fp})).await.unwrap();
+        let devices = report["inventory"]["devices"].as_array().unwrap();
+        assert!(devices.len() <= 64);
+        for device in devices {
+            assert_eq!(device.as_object().unwrap().len(), 3);
+            assert!(device.get("serial").is_none() && device.get("InstanceId").is_none());
+        }
+    }
+    call(&host, json!({"cmd":"permissions", "peer":client_fp, "capability":"device_inventory", "allowed":false})).await.unwrap();
+    assert!(call(&client, json!({"cmd":"devices", "peer":host_fp})).await.is_err());
 }
 
 /// A client asks the host for access; the host owner approves, and the host setting can refuse requests.

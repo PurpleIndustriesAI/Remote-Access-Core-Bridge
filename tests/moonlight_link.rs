@@ -128,7 +128,7 @@ async fn moonlight_link_and_channels() {
     // An unknown certificate admitted only for linking cannot send clipboard data.
     // The intruder grants itself approval locally; only the host's own trust decides.
     let mut st = config::load_state(&other).unwrap();
-    st.peers.push(config::Peer { name: "host".into(), fingerprint: host_fp.clone(), addrs: vec![host_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard: true, files: true } });
+    st.peers.push(config::Peer { name: "host".into(), fingerprint: host_fp.clone(), addrs: vec![host_addr.clone()], autosync: true, paired_at: 0, permissions: config::Permissions { clipboard: true, files: true, ..Default::default() } });
     config::save_state(&other, &st).unwrap();
     let other2 = node_dir(&root, "other2", base + 50, |_| {});
     let mut st2 = config::load_state(&other2).unwrap();

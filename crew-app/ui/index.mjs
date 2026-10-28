@@ -90,6 +90,7 @@ export default function RemoteAccessCrew() {
   const [pairAddr, setPairAddr] = useState('')
   const [pairCode, setPairCode] = useState('')
   const [confirmRemove, setConfirmRemove] = useState('')
+  const [hardware, setHardware] = useState(null)
   const [clock, setClock] = useState(Date.now())
   const fetchedAt = useRef(Date.now())
 
@@ -194,7 +195,7 @@ export default function RemoteAccessCrew() {
     h('div', { className: 'row spread' },
       h('div', null, h('div', { className: 'name' }, 'Allow access requests'),
         h('small', null, requestsOn
-          ? 'On. Paired devices can ask for clipboard or file access. Nothing is granted until you approve it here.'
+          ? 'On. Paired devices can request supported access. Nothing is granted until you approve it here.'
           : 'Off. Requests from paired devices are refused. You can still allow a device with its switches above.')),
       h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: requestsOn, disabled, 'aria-label': 'Allow access requests',
         onChange: e => act('set', { allow_access_requests: e.target.checked }, () => e.target.checked ? 'Access requests on.' : 'Access requests off.') }), requestsOn ? 'On' : 'Off')),
@@ -243,7 +244,7 @@ export default function RemoteAccessCrew() {
   const sharing = h('div', { className: 'card' },
     h('h2', null, 'Connection sharing'),
     h('p', null, 'Both machines must allow the active link. RAC verifies the settings again before every transfer. USB and Bluetooth use the network link already provided by the devices; RAC never changes adapter or radio settings.'),
-    ...[['wifi', 'WiFi and LAN'], ['usb', 'USB and connected accessories'], ['bluetooth', 'Bluetooth']].map(([key, label]) =>
+    ...[['wifi', 'WiFi and LAN'], ['usb', 'USB tether network'], ['bluetooth', 'Bluetooth network']].map(([key, label]) =>
       h('div', { key, className: 'row spread', style: { marginTop: 8 } },
         h('div', { className: 'name' }, label),
         h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: !!transport[key], disabled,
@@ -251,6 +252,33 @@ export default function RemoteAccessCrew() {
           onChange: e => act('set', { [`transport_${key}`]: e.target.checked }, () => `${label} sharing ${e.target.checked ? 'allowed' : 'blocked'} on this machine.`) }),
           transport[key] ? 'On' : 'Off'))),
     h('small', { style: { marginTop: 10 } }, 'USB and Bluetooth start off. Turn them on only while using that kind of link.'))
+
+  const hardwareReady = data?.device_inventory_supported === true
+  const hardwareSettings = h('section', { className: 'card', 'aria-label': 'Devices and hardware settings' },
+    h('h2', null, 'Devices and hardware'),
+    h('p', null, 'Inspect USB device classes, product IDs and connection status on a paired Windows client. Approval is required on the computer with the hardware. Serial numbers and personal device names are omitted.'),
+    h('small', null, 'This permission allows inventory only. It does not provide USB forwarding, file access, iPhone screen control or device commands.'),
+    !hardwareReady && h('p', { role: 'status' }, 'The running bridge does not support device inventory. Install the reviewed client update on both computers before requesting access.'),
+    peers.map(p => h('div', { key: p.fingerprint, className: 'peer' },
+      h('div', { className: 'name' }, p.name),
+      h('label', { className: 'switch' },
+        h('input', { type: 'checkbox', checked: !!p.permissions?.device_inventory,
+          disabled: disabled || !hardwareReady, 'aria-label': `Allow ${p.name} to inspect USB devices on this computer`,
+          onChange: e => act('permissions', { peer: p.fingerprint, capability: 'device_inventory', allowed: e.target.checked }) }),
+        'Allow this peer to inspect USB devices on this computer'),
+      h('div', { className: 'row', style: { marginTop: 8 } },
+        h('button', { disabled: disabled || !hardwareReady,
+          onClick: () => act('request-access', { peer: p.fingerprint, capabilities: ['device_inventory'] }, () => `Requested inventory access on ${p.name}. Approve it in RAC on that computer. No local hardware permission was granted.`) }, 'Request client approval'),
+        h('button', { disabled: disabled || !hardwareReady, onClick: async () => {
+          setHardware(null)
+          const result = await act('devices', { peer: p.fingerprint })
+          if (result) setHardware(result)
+        } }, 'Inspect client USB devices')))),
+    hardware && h('div', { role: 'status', style: { marginTop: 12 } },
+      h('strong', null, `USB devices on ${hardware.peer}`),
+      !(hardware.inventory?.devices || []).length && h('p', null, 'No USB devices were reported by this client.'),
+      (hardware.inventory?.devices || []).map((device, i) => h('p', { key: i }, `${device.class || 'USB'}: ${device.name || 'Unspecified model'}, ${device.status || 'Unknown status'}`)),
+      hardware.inventory?.limit_reached && h('small', null, 'Only the first 64 devices are shown.')))
 
   const linkOn = !!data?.settings?.moonlight_link
   const channels = data?.settings?.channels || []
@@ -291,7 +319,7 @@ export default function RemoteAccessCrew() {
     error && h('div', { className: 'alert', role: 'alert' }, error),
     notice && h('div', { className: 'notice', role: 'status' }, notice),
     h('div', { className: 'grid' },
-      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, sharing, streaming),
+      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, sharing, hardwareSettings, streaming),
       h('div', null, network, sendCard, activity)))
 }
 

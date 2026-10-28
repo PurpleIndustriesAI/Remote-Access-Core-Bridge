@@ -27,6 +27,7 @@ ALLOWED = {
     'host_app_title': set(),
     'unpair': {'peer'},
     'ping': {'peer'},
+    'devices': {'peer'},
     'wifi': {'scan'},
     'probe': {'peer', 'n'},
     'speedtest': {'peer', 'mib'},

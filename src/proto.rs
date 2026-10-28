@@ -24,6 +24,7 @@ pub struct FileEntry {
 pub enum Msg {
     Pair { proof: String, name: String, addrs: Vec<String> },
     Ping,
+    DeviceInventory,
     Text { len: u64 },
     Image { len: u64 },
     Files { files: Vec<FileEntry> },
@@ -62,6 +63,8 @@ pub struct Reply {
     /// A successful transport check authorizes the next frame on this TLS connection only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transport_session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_inventory: Option<crate::devices::Inventory>,
 }
 
 impl Reply {

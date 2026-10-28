@@ -14,11 +14,12 @@ USAGE:
   rac send [--to PEER] [--text TEXT | FILE...]
                                   Send text, files, or (with no input) the current clipboard
   rac ping PEER                   Check that a peer is reachable and still trusted
+  rac devices PEER                Read USB metadata after approval on that client
   rac sync on|off [--peer PEER]   Turn automatic clipboard sync on or off
   rac unpair PEER                 Forget a peer (it can no longer connect)
-  rac allow PEER clipboard|files on|off
+  rac allow PEER clipboard|files|device_inventory on|off
                                   Grant or revoke a paired device's clipboard or file access
-  rac request-access PEER [clipboard] [files]
+  rac request-access PEER [clipboard] [files] [device_inventory]
                                   Ask PEER's owner for access (default: both); this machine
                                   allows the same exchange with PEER
   rac approve PEER | rac deny PEER
@@ -167,6 +168,12 @@ fn real_main() -> Result<()> {
             println!("Peer reachable and trusted.");
             Ok(())
         }
+        "devices" => {
+            let fp = resolve_peer(args.get(1).context("missing peer")?)?;
+            let report = call(json!({"cmd": "devices", "peer": fp}))?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         "sync" => {
             let on = match args.get(1).map(String::as_str) {
                 Some("on") => true,
@@ -206,7 +213,7 @@ fn real_main() -> Result<()> {
                 caps = vec!["clipboard", "files"];
             }
             let r = call(json!({"cmd": "request_access", "peer": fp, "capabilities": caps}))?;
-            println!("Local access is approved. Asked {} for {} access; its owner approves or denies it there.", r["peer"].as_str().unwrap_or("?"), list(&r["requested"]).replace(", ", " and "));
+            println!("Asked {} for {} access; its owner approves or denies it there. Device inventory grants remain local to each client.", r["peer"].as_str().unwrap_or("?"), list(&r["requested"]).replace(", ", " and "));
             Ok(())
         }
         "approve" | "deny" => {

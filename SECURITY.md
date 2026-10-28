@@ -46,6 +46,12 @@ links. Unidentified links are blocked. Tailscale and loopback are explicitly gro
 These controls apply to network links. They do not provide direct USB device redirection or
 Bluetooth peripheral passthrough. Physical USB and Bluetooth acceptance still needs real devices.
 
+Device inventory has separate client approval. Existing clipboard, file and transport grants
+never imply permission to inspect hardware. The client returns bounded USB class, product ID
+and status data only, with no serial numbers or personal device names. The permission is
+checked before and after the query. Requests do not automatically grant reciprocal hardware
+access. See [Devices and hardware](docs/HardwareAccess.md) for the supported scope and limits.
+
 The earlier 0.4.2 implementation checked consent on a separate connection and permitted content
 without a verification frame. It also treated unrecognized interface names as WiFi. Regression
 tests reproduced these defects. The source repair rejects unverified payloads, enforces revocation,

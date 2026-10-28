@@ -74,6 +74,7 @@ pub struct Node {
     link_limiter: moonlight::Limiter,
     /// Pending access requests by peer fingerprint. Only paired peers can add one.
     requests: Mutex<std::collections::HashMap<String, AccessAsk>>,
+    device_query: tokio::sync::Mutex<Option<Instant>>,
 }
 
 fn now() -> u64 {
@@ -166,6 +167,7 @@ pub async fn run(opts: Options) -> Result<()> {
         token,
         link_limiter: moonlight::Limiter::default(),
         requests: Mutex::new(Default::default()),
+        device_query: tokio::sync::Mutex::new(None),
     });
     node.sync_trust();
     eprintln!("[rac] Remote Access Core (Bridge) {} listening on port {port}; identity {}", env!("CARGO_PKG_VERSION"), short_fingerprint(&node.id.fingerprint));
@@ -278,14 +280,14 @@ async fn handle_peer(node: Arc<Node>, sock: TcpStream, addr: SocketAddr) -> Resu
     }
     node.learn_addr(&fp, addr.ip());
     let peer = node.peer_name(&fp);
-    let result = receive(&node, &mut tls, msg, &peer, &fp).await;
+    let result = receive(&node, &mut tls, msg, &peer, &fp, actual).await;
     let reply = match &result {
-        Ok(()) => Reply::ok(),
+        Ok(inventory) => Reply { device_inventory: inventory.clone(), ..Reply::ok() },
         Err(e) => Reply::err(format!("{e:#}")),
     };
     proto::write_json(&mut tls, &reply).await.ok();
     tls.shutdown().await.ok();
-    result
+    result.map(|_| ())
 }
 
 fn accept_pairing(node: &Node, client_fp: &str, addr: SocketAddr, proof: &str, name: &str, addrs: Vec<String>) -> Reply {
@@ -406,11 +408,26 @@ fn require_permission(node: &Node, fp: &str, kind: &str) -> Result<()> {
     Ok(())
 }
 
-async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg: Msg, peer: &str, fp: &str) -> Result<()> {
+async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg: Msg, peer: &str, fp: &str, transport: &str) -> Result<Option<crate::devices::Inventory>> {
     let settings = node.state.lock().unwrap().settings.clone();
+    if matches!(msg, Msg::DeviceInventory) {
+        require_permission(node, fp, "device_inventory")?;
+        let mut guard = node.device_query.try_lock().map_err(|_| anyhow!("another device query is active"))?;
+        if guard.is_some_and(|last| last.elapsed() < Duration::from_secs(30)) {
+            bail!("wait 30 seconds between device queries");
+        }
+        *guard = Some(Instant::now());
+        let report = tokio::task::spawn_blocking(crate::devices::inventory).await??;
+        require_permission(node, fp, "device_inventory")?;
+        if !node.state.lock().unwrap().settings.transport.allows(transport) {
+            bail!("transport permission was revoked during device inspection");
+        }
+        node.event("in", peer, "device_inventory", 0, true, "USB metadata inspected with local approval");
+        return Ok(Some(report));
+    }
     match msg {
         Msg::Ping => Ok(()),
-        Msg::Pair { .. } | Msg::MoonlightLink { .. } | Msg::VerifyTransport { .. } => unreachable!(),
+        Msg::Pair { .. } | Msg::MoonlightLink { .. } | Msg::VerifyTransport { .. } | Msg::DeviceInventory => unreachable!(),
         Msg::AccessRequest { capabilities } => {
             if !settings.allow_access_requests {
                 node.event("in", peer, "access-request", 0, false, "refused: access requests are off");
@@ -421,7 +438,7 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
             let missing: Vec<String> = wanted.into_iter().filter(|c| !have.has(c)).collect();
             if missing.is_empty() {
                 node.event("in", peer, "access-request", 0, true, "already approved");
-                return Ok(());
+                return Ok(None);
             }
             let notify = {
                 let mut q = node.requests.lock().unwrap();
@@ -519,7 +536,7 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
                 }
             }
         }
-    }
+    }.map(|_| None)
 }
 
 /// Toast the owner through Crew's Notification Bridge when it is installed. Best effort:
@@ -1160,7 +1177,7 @@ async fn moonlight_link_with(node: &Node, target: &str, host_fp: &str, cert: &st
     }
     list.truncate(8);
     // The client links only when its owner turned sharing on; it revokes this when sharing stops.
-    let permissions = config::Permissions { clipboard: true, files: true };
+    let permissions = config::Permissions { clipboard: true, files: true, ..Default::default() };
     let peer = Peer { name: clean_name(reply.name.as_deref().unwrap_or("host")), fingerprint: host_fp, addrs: list, autosync: true, paired_at: now(), permissions };
     upsert_peer(node, peer.clone());
     node.event("out", &peer.name, "moonlight-link", 0, true, "linked through Sunshine pairing");
@@ -1252,6 +1269,7 @@ fn status(node: &Node) -> Value {
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "permissions_version": 1,
+        "device_inventory_supported": cfg!(windows),
         "name": node.name,
         "fingerprint": node.id.fingerprint,
         "short_fingerprint": short_fingerprint(&node.id.fingerprint),
@@ -1329,11 +1347,15 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
         "request_access" => {
             let fp = str_arg(req, "peer")?;
             let list: Vec<String> = req.get("capabilities").and_then(Value::as_array).context("missing 'capabilities'")?
-                .iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                .iter().map(|v| v.as_str().map(String::from).context("capabilities must be strings"))
+                .collect::<Result<Vec<_>>>()?;
             let caps = config::capabilities(&list)?;
             let peer = node.peer(fp).context("unknown peer")?;
-            // Asking is this owner's consent for the same exchange in both directions.
-            grant(node, fp, &caps, true)?;
+            // Clipboard and files retain reciprocal consent. Hardware never does.
+            let reciprocal: Vec<String> = caps.iter().filter(|c| c.as_str() != "device_inventory").cloned().collect();
+            if !reciprocal.is_empty() {
+                grant(node, fp, &reciprocal, true)?;
+            }
             let r = deliver(node, &peer, &Outgoing { msg: Msg::AccessRequest { capabilities: caps.clone() }, body: Body::None, bytes: 0 }).await;
             match &r {
                 Ok(()) => node.event("out", &peer.name, "access-request", 0, true, format!("asked for {}; waiting for its owner", caps.join(" and "))),
@@ -1372,6 +1394,20 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
         "ping" => {
             ping(node, str_arg(req, "peer")?).await?;
             Ok(json!({}))
+        }
+        "devices" => {
+            let peer = node.peer(str_arg(req, "peer")?).context("unknown peer")?;
+            let (mut stream, _) = connect(node, &peer).await?;
+            verify_transport(node, &peer, &mut stream).await?;
+            proto::write_json(&mut stream, &Msg::DeviceInventory).await?;
+            let reply: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut stream)).await??;
+            stream.shutdown().await.ok();
+            if !reply.ok {
+                bail!("{} declined device inspection: {}", peer.name, reply.error.unwrap_or_default());
+            }
+            let report = reply.device_inventory.context("peer does not support device inventory; update its RAC client")?;
+            report.validate()?;
+            Ok(json!({"peer": peer.name, "inventory": report}))
         }
         "wifi" => {
             let scan = req.get("scan").and_then(|v| v.as_bool()).unwrap_or(false);

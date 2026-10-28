@@ -17,6 +17,8 @@ pub struct Permissions {
     pub clipboard: bool,
     #[serde(default)]
     pub files: bool,
+    #[serde(default)]
+    pub device_inventory: bool,
 }
 
 impl Permissions {
@@ -24,6 +26,7 @@ impl Permissions {
         match kind {
             "text" | "image" => self.clipboard,
             "files" => self.files,
+            "device_inventory" => self.device_inventory,
             _ => false,
         }
     }
@@ -33,6 +36,7 @@ impl Permissions {
         match capability {
             "clipboard" => self.clipboard,
             "files" => self.files,
+            "device_inventory" => self.device_inventory,
             _ => false,
         }
     }
@@ -41,7 +45,8 @@ impl Permissions {
         match capability {
             "clipboard" => self.clipboard = allowed,
             "files" => self.files = allowed,
-            _ => bail!("unknown capability '{capability}'; use clipboard or files"),
+            "device_inventory" => self.device_inventory = allowed,
+            _ => bail!("unknown capability '{capability}'"),
         }
         Ok(())
     }
@@ -51,8 +56,8 @@ impl Permissions {
 pub fn capabilities(list: &[String]) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for c in list {
-        if c != "clipboard" && c != "files" {
-            bail!("unknown capability '{c}'; use clipboard or files");
+        if c != "clipboard" && c != "files" && c != "device_inventory" {
+            bail!("unknown capability '{c}'");
         }
         if !out.contains(c) {
             out.push(c.clone());
@@ -91,7 +96,8 @@ mod consent_tests {
         assert!(!peer.permissions.allows("text"));
         assert!(!peer.permissions.allows("image"));
         assert!(!peer.permissions.allows("files"));
-        assert!(!Permissions { clipboard:true, files:true }.allows("commands"));
+        assert!(!Permissions { clipboard:true, files:true, ..Default::default() }.allows("commands"));
+        assert!(!peer.permissions.allows("device_inventory"));
     }
 
     #[test]
@@ -104,6 +110,11 @@ mod consent_tests {
         p.set("files", true).unwrap();
         assert!(p.has("files") && !p.has("clipboard"));
         assert!(p.set("admin", true).is_err());
+        p.set("device_inventory", true).unwrap();
+        assert!(p.has("device_inventory"));
+        assert!(!p.has("device_control"));
+        p.set("device_inventory", false).unwrap();
+        assert!(!p.has("device_inventory"));
     }
 
     #[test]
