@@ -1,61 +1,128 @@
-# MIKU setup for Remote Access Core (Bridge) 0.4.0
+# MIKU setup for Remote Access Core 0.5.0
 
-For the Claude agent on MIKU. Goal: text, screenshots and other images, and files copy and paste
-between MIKU and the host PURPDINO-LAPTOP in both directions.
+This guide is for Codex or Kimi on MIKU. The iPhone is physically connected to MIKU by USB. PURPDINO-LAPTOP is the requesting computer.
 
-## Current state (2026-10-24)
+## Current verified state
 
-- Host PURPDINO-LAPTOP runs bridge 0.4.0, port 48765, firewall rule on. LAN 192.168.0.159.
-  Host identity starts `50E7-F036-84B9`.
-- The host has MIKU paired (`2620-04AF-71D3`) with clipboard and files allowed.
-- From the host, MIKU (192.168.0.161) answers ping, but TCP 48765 is closed. Every host send
-  to MIKU times out. Either MIKU's bridge is not running or MIKU's firewall blocks the port.
+The host runs RAC 0.5.0. Its identity starts `50E7-F036-84B9`. MIKU is paired with clipboard and file access.
 
-## Steps
+A host ping to MIKU succeeded on October 29, 2026. The device inventory request failed because MIKU runs bridge 0.4.3. That version does not support `device_inventory`.
 
-Run in a normal (not Administrator) terminal unless a step says otherwise.
+The host delivered `RAC050.zip` through RAC. A delivery receipt does not prove the destination file state. Verify the actual file on MIKU before installation.
 
-1. Pull this branch (`feat/rac-access-requests`) and build:
-   `cargo build --release`. Check `target/release/rac version` prints `rac 0.4.0`.
-2. Install. MIKU runs the bridge inside the Remote Access Suite (`RAC_HOME` is
-   `%USERPROFILE%\.remote-access-crew`), so update it with the suite package. `install.ps1`
-   refuses to run there, because its shortcuts would start a second bridge with a second
-   identity and break the pairing. Machines without the suite:
-   `powershell -ExecutionPolicy Bypass -File .\install\install.ps1` (Windows) or
-   `./install/install.sh` (Linux). This replaces the binaries and keeps the pairing in
-   `%APPDATA%\RemoteAccessCrew` or `~/.config/remote-access-crew`.
-3. Open the firewall once. Windows, elevated PowerShell:
-   `powershell -ExecutionPolicy Bypass -File .\install\install.ps1 -Firewall`.
-   Linux with ufw: run the `ufw` commands `install.sh` prints. Windows asks for UAC
-   approval. Tell the owner first which chat is asking and why.
-4. Confirm the bridge is up: `rac status` shows `(v0.4.0)` and the peer PURPDINO-LAPTOP.
-   If no peer is listed, pair again: the owner shows a code on the host Crew page
-   (Remote Access Core, Show a pairing code), then run `rac pair 192.168.0.159 <code>`.
-   Pairing codes have no letters I or O; read `1` and `0` as digits.
-5. Ask for access: `rac request-access PURPDINO-LAPTOP`. This allows clipboard and files on
-   MIKU's side and sends a request to the host. The host is already approved for MIKU, so it
-   replies "already approved". If the host owner had not approved, they would get a toast and
-   approve on the host page or with `rac approve MIKU`.
-6. Check both directions: `rac ping PURPDINO-LAPTOP`, then
-   `rac send --text "MIKU test"`. Ask the owner to copy text on the host and paste on MIKU.
+## Security boundaries
 
-## Acceptance checks
+Run commands as the signed in Windows user. Do not use an Administrator terminal for the update.
 
-Report each one as passed or failed in the Moonlight-Crew coordination PR. Do not post
-pairing codes there.
+Keep the existing identity, certificate, pairing records, clipboard permission and file permission. Do not create another identity.
 
-- Text copied on MIKU pastes on the host, and the reverse.
-- A screenshot (Print Screen or Win+Shift+S on Windows, Spectacle on Linux) copied on one
-  machine pastes as an image on the other.
-- Files copied in Explorer or Dolphin arrive in `Downloads/Remote Access Crew` on the other
-  machine, and Paste in the file manager works.
-- `rac status` on both machines shows `clipboard on  files on` for the other machine.
+Do not use `install.ps1`. MIKU uses the Remote Access Suite. The standalone installer can create a second bridge with a second identity.
 
-## If it fails
+Do not enable USB peripheral sharing. Do not install drivers. Do not change firewall or pairing state. Do not resume paused remote tasks. Do not repeat the previously canceled USB elevation.
 
-- `timed out`: the other bridge is not running, or a firewall blocks 48765.
-- `local client approval required`: this machine has not allowed that device. Run
-  `rac allow <peer> clipboard on` (and `files on`).
-- `not accepting access requests`: the other owner turned requests off. They can allow
-  the device with its switches, or run `rac access-requests on`.
-- `bad control token`: run `rac` as the same user that runs the bridge, not as Administrator.
+Inventory returns bounded USB metadata only. Inventory does not redirect a USB device and does not control the iPhone.
+
+## 1. Verify the delivered package
+
+Verify the normal RAC receive folder:
+
+```powershell
+$pkg = Join-Path $env:USERPROFILE 'Downloads\Remote Access Crew\RAC050.zip'
+Get-Item -LiteralPath $pkg
+(Get-FileHash -LiteralPath $pkg -Algorithm SHA256).Hash.ToLower()
+```
+
+Expected values:
+
+```text
+Size: 5886936 bytes
+SHA256: 65c0956afdb472df3fb30951c14e233b33936e090ba213cfdab6d8411add1540
+Source revision: 8b65ed342c8c15e34ae8572ec60b15064a926a8e
+```
+
+Stop if the file is absent or either value differs. Report the actual path, size and hash. Do not rename another archive as a substitute.
+
+## 2. Identify the active suite binaries
+
+Read the active process path before replacing anything:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='remote-access-crew.exe'" |
+  Select-Object ProcessId, ExecutablePath, CommandLine
+```
+
+Read the Crew app binaries when that path manages the active bridge:
+
+```powershell
+$app = Join-Path $env:USERPROFILE '.codex-crew\apps\remote-access-crew'
+Get-Item -LiteralPath (Join-Path $app 'bin\remote-access-crew.exe')
+Get-Item -LiteralPath (Join-Path $app 'bin\rac.exe')
+```
+
+Preserve `%USERPROFILE%\.remote-access-crew`. That directory contains `state.json`, `identity.cert.der`, `identity.key.der` and `control.token`. Do not publish or copy those files into Git or a release archive.
+
+Stop if the active suite update route is unclear. Report the process path and Crew app path. Do not guess a destination.
+
+## 3. Stage and verify the update
+
+Use a new local staging directory after the package hash matches:
+
+```powershell
+$stage = Join-Path $env:TEMP 'RAC050-verified'
+Expand-Archive -LiteralPath $pkg -DestinationPath $stage -Force
+Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage 'remote-access-crew.exe')
+Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stage 'rac.exe')
+```
+
+Compare both executable hashes with `SHA256SUMS.txt` in the archive. Stop on any mismatch.
+
+## 4. Preserve rollback and update the suite
+
+Use the existing Remote Access Suite update route. Back up the two active executables before replacement. Preserve all state and identity files in place.
+
+Stop only the identified RAC bridge process during replacement. Do not stop Crew, other chats, remote desktop sessions or unrelated processes. Replace only `remote-access-crew.exe` and `rac.exe` in the verified active suite locations. Update the Crew app files through the existing app update route when that route manages them.
+
+Start the same suite bridge after replacement. Do not create new shortcuts or a second startup entry.
+
+## 5. Verify the running update
+
+Run these tests with the same Windows user:
+
+```powershell
+rac status
+rac ping PURPDINO-LAPTOP
+```
+
+Verify that `rac status` reports version 0.5.0 and retains PURPDINO-LAPTOP. Compare both running executable hashes with the staged release hashes.
+
+If the update fails, stop the identified bridge, restore only its two backed up executables, and start the same suite bridge. Report the error and rollback result.
+
+## 6. Approve bounded inventory on MIKU
+
+Approval is local to MIKU. A remote request cannot grant it.
+
+Use RAC Settings, Devices and hardware. Approve only `device_inventory` for host fingerprint `50E7-F036-84B9-6821-4F2F-5242`.
+
+The equivalent local command is:
+
+```powershell
+rac allow PURPDINO-LAPTOP device_inventory on
+```
+
+Leave clipboard and file permissions unchanged. Do not grant reciprocal hardware access automatically.
+
+## 7. Test and report
+
+Ask chat 178 to run this command once on the host:
+
+```powershell
+rac devices MIKU
+```
+
+Return only the Apple USB count and device type. Do not publish serial numbers, personal device names, device paths or device contents.
+
+Record the responding agent name and actual UTC observation times in the existing Remote Access Crew coordination discussion. Report every failure exactly.
+
+## Remaining acceptance
+
+A successful inventory does not establish iPhone control. Apple USB trust, a reviewed iPhone control route and live acceptance remain separate jobs. Gallery, calls, iMessage behavior, screen control and AirDrop require their own verified implementations and tests.
