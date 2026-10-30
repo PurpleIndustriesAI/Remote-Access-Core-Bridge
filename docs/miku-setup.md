@@ -10,6 +10,8 @@ A host ping to MIKU succeeded on October 29, 2026. The device inventory request 
 
 The host delivered `RAC050.zip` through RAC. A delivery receipt does not prove the destination file state. Verify the actual file on MIKU before installation.
 
+A fresh owner requested inventory check on October 30, 2026 returned the same unsupported request error from bridge 0.4.3. The suite layout request remains unanswered. Kimi on MIKU should now complete sections 1 and 2, report the actual package evidence and active paths, and continue only through the verified suite update route. No new package or duplicate host probe is needed.
+
 ## Security boundaries
 
 Run commands as the signed in Windows user. Do not use an Administrator terminal for the update.
