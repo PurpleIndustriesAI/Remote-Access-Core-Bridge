@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 dist/
 /android/build/
+tools/display-wake/*.exe

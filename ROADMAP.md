@@ -18,7 +18,7 @@ Last updated: 2026-10-22.
 | Secure elevated logging | Done (verified) | v4 security fix: admin-owned log in the protected install folder. |
 | Wi-Fi prefers 5 GHz | Done (verified) | Adapter "Preferred Band" set to 5 GHz; host on Wi-Fi 6 channel 100 at 85% signal. |
 | NVIDIA encoding (NVENC/HEVC) | Done (verified) | Root cause: Optimus panel on Intel GPU, no software MUX on AORUS 15G YB. Fix: virtual monitor on the NVIDIA GPU. Live sessions on 2026-10-21 (20:40 to 21:25) used `hevc_nvenc` at 1920x1080. See Moonlight-Crew `windows-host/nvidia-virtual-display/`. |
-| Host rename to "Remote Access Core (Host)" | Waiting: owner approval | Renamed from "Remote Access Crew (Host)" on 2026-10-24. `Rebrand-Host.ps1` sets the Sunshine name, service display name, and Start Menu shortcut. It needs one admin approval at the host. |
+| Host toast and service name "RAC Host" | Applied 2026-10-29, toast pending Sunshine restart | `install/rac-host-rebrand.ps1` (admin) moved the vendor `Sunshine.lnk` to `config\rebrand-backup`, renamed the host shortcut to `RAC Host.lnk`, and set the service display name. Windows names Sunshine toasts after the only shortcut targeting `sunshine.exe`. `-Remove` reverts. |
 | Host AI view (time-boxed, owner-approved) | In review | Moonlight-Crew PR #7 is the single host adapter (PR #10 closed). Owner approves 3, 6 or 12 hours via UAC; admin-only grant file; no cursor. 38 checks pass. |
 | Intel driver update for HEVC on QuickSync | Planned, fallback only | Only needed if the NVIDIA virtual display fails. |
 | Virtual display driver pipe hardening | Planned | Upstream driver exposes a local control pipe to all local processes. Track upstream; low risk on a single-user host. |
