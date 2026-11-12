@@ -169,20 +169,19 @@ impl Actor {
     }
 
     fn apply(&mut self, c: Content) -> Result<()> {
-        match c {
-            Content::Text(t) => {
-                set_text(&mut self.cb, &t)?;
+        let image = match &c {
+            Content::Image(png) => Some(decode_png(png)?),
+            _ => None,
+        };
+        retry_busy(|| match (&c, &image) {
+            (Content::Text(t), _) => self.cb.set_text(t.as_str()),
+            (Content::Files(paths), _) => self.cb.set().file_list(paths),
+            (Content::Image(_), Some((w, h, rgba))) => {
+                self.cb.set_image(arboard::ImageData { width: *w as usize, height: *h as usize, bytes: Cow::Borrowed(rgba) })
             }
-            Content::Image(png) => {
-                let (w, h, rgba) = decode_png(&png)?;
-                self.cb
-                    .set_image(arboard::ImageData { width: w as usize, height: h as usize, bytes: Cow::Owned(rgba) })
-                    .context("could not place the image on the clipboard")?;
-            }
-            Content::Files(paths) => {
-                self.cb.set().file_list(&paths).context("could not place the files on the clipboard")?;
-            }
-        }
+            (Content::Image(_), None) => unreachable!("images are decoded above"),
+        })
+        .with_context(|| format!("could not place the {} on the clipboard", c.kind()))?;
         // Record what is on the clipboard now, as read back, so the watcher does not re-send it.
         self.seq = platform::seq();
         let now = self.snapshot().ok().flatten().map(|(_, fp)| fp);
@@ -193,8 +192,24 @@ impl Actor {
     }
 }
 
-fn set_text(cb: &mut arboard::Clipboard, t: &str) -> Result<()> {
-    cb.set_text(t.to_string()).context("could not place the text on the clipboard")
+/// Waits between tries while another app holds the clipboard. arboard alone gives up after about 25 ms,
+/// which declined peer images whenever clipboard history or a viewer was reading.
+const BUSY_RETRY_MS: [u64; 5] = [50, 100, 200, 400, 800];
+
+fn retry_busy(mut place: impl FnMut() -> Result<(), arboard::Error>) -> Result<(), arboard::Error> {
+    let mut waits = BUSY_RETRY_MS.iter();
+    loop {
+        let e = match place() {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        // Unknown covers SetClipboardData failing after another app reopened the clipboard (os error 1418).
+        let busy = matches!(e, arboard::Error::ClipboardOccupied | arboard::Error::Unknown { .. });
+        match waits.next() {
+            Some(ms) if busy => std::thread::sleep(Duration::from_millis(*ms)),
+            _ => return Err(e),
+        }
+    }
 }
 
 pub fn fingerprint_text(t: &str) -> String {
@@ -313,5 +328,28 @@ mod tests {
     #[test]
     fn rejects_garbage_png() {
         assert!(decode_png(b"not a png").is_err());
+    }
+
+    // A fake writer, never the real clipboard: a live bridge would sync test content to peers.
+    fn tries(fails: usize, err: fn() -> arboard::Error) -> (bool, usize) {
+        let mut n = 0;
+        let ok = retry_busy(|| {
+            n += 1;
+            if n <= fails { Err(err()) } else { Ok(()) }
+        })
+        .is_ok();
+        (ok, n)
+    }
+
+    #[test]
+    fn busy_clipboard_is_retried() {
+        assert_eq!(tries(2, || arboard::Error::ClipboardOccupied), (true, 3));
+        assert_eq!(tries(1, || arboard::Error::Unknown { description: "SetClipboardData failed".into() }), (true, 2));
+        assert_eq!(tries(99, || arboard::Error::ClipboardOccupied), (false, BUSY_RETRY_MS.len() + 1));
+    }
+
+    #[test]
+    fn other_clipboard_errors_fail_at_once() {
+        assert_eq!(tries(99, || arboard::Error::ConversionFailure), (false, 1));
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "remote-access-crew"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "Secure two-way clipboard, image, and file sharing between paired machines over LAN or Tailscale."
 license-file = "LICENSE"
