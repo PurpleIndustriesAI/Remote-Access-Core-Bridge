@@ -1,7 +1,7 @@
 {
   "name": "remote-access-crew",
   "displayName": "Remote Access Core (Bridge)",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Copy on one machine, paste on the other: secure two-way text, image, and file sharing over LAN or Tailscale.",
   "author": "Purple Industries",
   "license": "Proprietary",
@@ -9,7 +9,7 @@
   "minCodexCrewVersion": "0.7.0",
   "tags": ["clipboard", "files", "remote-access", "tailscale"],
   "backend": {"hooks": {"routes": "backend.hooks:routes", "on_startup": "backend.hooks:on_startup", "on_shutdown": "backend.hooks:on_shutdown"}},
-  "permissions": {"api": ["/api/apps/remote-access-crew/rac"], "storage": true, "network": true, "memory": "app-scoped", "spawn": false, "cron": false},
+  "permissions": {"api": ["/api/apps/remote-access-crew/rac"], "storage": true, "network": true, "memory": "app-scoped", "spawn": false, "cron": false, "sessionRouting": true},
   "skills": ["skills/remote-access-crew"],
   "platform": {"os": ["windows", "linux"], "arch": ["x86_64"], "requiresDesktopApp": false, "installMode": "server"},
   "ui": {"entry": "index.mjs", "pages": [{"route": "/apps/remote-access-crew", "label": "Remote Access Core (Bridge)", "iconUrl": "icon.svg"}]}

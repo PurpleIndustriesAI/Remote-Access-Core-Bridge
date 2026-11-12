@@ -31,6 +31,7 @@ ALLOWED = {
     'wifi': {'scan'},
     'probe': {'peer', 'n'},
     'speedtest': {'peer', 'mib'},
+    'channel_send': {'peer', 'channel', 'path'},
 }
 
 

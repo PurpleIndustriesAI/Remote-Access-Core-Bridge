@@ -106,6 +106,36 @@ Readings come from `netsh` on Windows and `nmcli` on Linux. Nothing leaves the m
 `crew-app/` is the Crew app (Control Room UI). The installers register it when Crew is
 present. Crew requires the owner to trust third-party apps in Settings before they run.
 
+### Crew session router
+
+Version 0.6.0 can expose the open Crew sessions that a local router chat may address. Kimi and
+Codex on a paired machine can page through that signed directory, choose an exact session,
+send it a message, and read later replies. This uses the separate `crew-sessions` channel,
+not the ordinary Crew Link mailbox.
+
+On the receiving machine, enable the channel, approve **Files** and **Crew sessions** for
+the peer, and choose the router chat and peer in the RAC app. The router chat must be an
+open, persistent, eligible local chat. Its ordinary Crew session permissions still apply.
+The Crew Link signing key and independently pinned peer public key must already be configured.
+
+From the Crew app directory on the client machine:
+
+```sh
+python backend/session_client.py list --peer HOST --agent kimi --all
+python backend/session_client.py send --peer HOST --agent kimi --target CHAT_KEY --text "Hello"
+python backend/session_client.py read --peer HOST --agent kimi --target CHAT_KEY --since 0
+```
+
+Use `codex` as the agent for Codex. A send result says whether the turn started or queued.
+Read with the returned `next_since` cursor. A timeout is not proof of delivery or failure;
+do not retry the same request automatically.
+
+The directory contains metadata only. Private, app scoped, unattended, channel linked,
+mirrored, crew mode, remote executor, cross-workspace, and otherwise unauthorized sessions
+are excluded. Message and reply bodies stay within the paired encrypted channel and use
+Crew's existing redaction. The signature authenticates the paired machine. The agent label
+identifies the requested caller but is not a separate per-agent identity.
+
 ## Build
 
 ```sh

@@ -455,6 +455,9 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
         }
         Msg::Channel { channel, name, len, sha256 } => {
             require_permission(node, fp, "files")?;
+            if channel == "crew-sessions" {
+                require_permission(node, fp, "session_routing")?;
+            }
             let r = receive_channel(node, s, &settings, fp, &channel, &name, len, &sha256).await;
             match &r {
                 Ok(p) => node.event("in", peer, &format!("channel:{channel}"), len, true, format!("saved {}", p.display())),
@@ -906,6 +909,9 @@ async fn stream_file<W: AsyncWrite + Unpin>(t: &mut W, p: &Path, len: u64) -> Re
 /// the channel; nothing goes to the clipboard.
 async fn channel_send(node: &Node, fp: &str, channel: &str, path: &Path) -> Result<Value> {
     require_permission(node, fp, "files")?;
+    if channel == "crew-sessions" {
+        require_permission(node, fp, "session_routing")?;
+    }
     if !config::valid_channel(channel) {
         bail!("channel names use 1-32 lowercase letters, digits or '-'");
     }
@@ -1270,6 +1276,7 @@ fn status(node: &Node) -> Value {
         "version": env!("CARGO_PKG_VERSION"),
         "permissions_version": 1,
         "device_inventory_supported": cfg!(windows),
+        "session_routing_supported": true,
         "name": node.name,
         "fingerprint": node.id.fingerprint,
         "short_fingerprint": short_fingerprint(&node.id.fingerprint),

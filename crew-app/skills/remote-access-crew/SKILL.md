@@ -23,6 +23,13 @@ and the Crew page at `/apps/remote-access-crew` control the bridge on this machi
   Windows for approval once and restarts Sunshine; never run it while a stream is live.
 - `rac channel on|off NAME`, `rac channel-send --to PEER --channel NAME FILE`: verified
   single-file delivery for apps such as Crew Link, into `<home>/channels/NAME/inbox/<sender fingerprint>`.
+- `python -m backend.session_client list --peer HOST --agent kimi --all`: show every Crew
+  session page available to the local router chat. Run from the Crew app directory. Use
+  `codex` for Codex. Select the exact `key`, never a title.
+- `python -m backend.session_client send --peer HOST --agent kimi --target CHAT_KEY --text "Hello"`:
+  send a bounded message through the signed `crew-sessions` channel.
+- `python -m backend.session_client read --peer HOST --agent kimi --target CHAT_KEY --since CURSOR`:
+  read bounded replies. Continue with the returned `next_since` value.
 
 ## Rules
 
@@ -34,3 +41,8 @@ and the Crew page at `/apps/remote-access-crew` control the bridge on this machi
 - Do not read, print, or store clipboard content when diagnosing; status shows only metadata.
 - Channel files are data for the receiving app. They never reach the clipboard, and the
   receiving app must verify them itself (Crew Link checks its own signatures).
+- Session routing needs the `crew-sessions` channel, file approval, session routing approval,
+  a pinned Crew Link peer key, and a selected eligible router chat. It grants no execution
+  trust and cannot bypass ordinary Crew session authorization.
+- A session send result means started or queued, not completed work. A response timeout is
+  uncertain. Never retry the same request automatically.

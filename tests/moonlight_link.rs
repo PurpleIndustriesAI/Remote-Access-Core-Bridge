@@ -170,6 +170,19 @@ async fn moonlight_link_and_channels() {
     call(&host, json!({"cmd": "channel_send", "peer": client_fp, "channel": "crew-link", "path": env})).await.unwrap();
     assert!(config::channel_inbox(&client, "crew-link").unwrap().join(&host_fp).join("envelope.json").exists());
 
+    // Session routing needs its own grant on both machines, beyond files and the channel.
+    for d in [&host, &client] {
+        call(d, json!({"cmd":"set", "channels":["crew-link", "crew-sessions"]})).await.unwrap();
+    }
+    let session = json!({"cmd":"channel_send", "peer":host_fp, "channel":"crew-sessions", "path":env});
+    assert!(call(&client, session.clone()).await.is_err(), "session channel bypassed routing consent");
+    call(&host, json!({"cmd":"permissions", "peer":client_fp, "capability":"session_routing", "allowed":true})).await.unwrap();
+    assert!(call(&client, session.clone()).await.is_err(), "session channel bypassed sender consent");
+    call(&client, json!({"cmd":"permissions", "peer":host_fp, "capability":"session_routing", "allowed":true})).await.unwrap();
+    call(&client, session.clone()).await.unwrap();
+    call(&host, json!({"cmd":"permissions", "peer":client_fp, "capability":"session_routing", "allowed":false})).await.unwrap();
+    assert!(call(&client, session).await.is_err(), "revoked session consent still accepted");
+
     // Turning Moonlight link off closes the door for new unknown certificates.
     call(&host, json!({"cmd": "set", "moonlight_link": ""})).await.unwrap();
     let err = call(&other, json!({"cmd": "moonlight_link", "addr": host_addr, "host_fp": host_fp, "moonlight_cert": stranger_pem, "sig": osig})).await.unwrap_err();

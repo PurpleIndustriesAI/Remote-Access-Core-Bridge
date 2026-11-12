@@ -19,6 +19,8 @@ pub struct Permissions {
     pub files: bool,
     #[serde(default)]
     pub device_inventory: bool,
+    #[serde(default)]
+    pub session_routing: bool,
 }
 
 impl Permissions {
@@ -27,16 +29,18 @@ impl Permissions {
             "text" | "image" => self.clipboard,
             "files" => self.files,
             "device_inventory" => self.device_inventory,
+            "session_routing" => self.session_routing,
             _ => false,
         }
     }
 
-    /// Whether one named capability ("clipboard" or "files") is granted.
+    /// Whether one named capability is granted.
     pub fn has(&self, capability: &str) -> bool {
         match capability {
             "clipboard" => self.clipboard,
             "files" => self.files,
             "device_inventory" => self.device_inventory,
+            "session_routing" => self.session_routing,
             _ => false,
         }
     }
@@ -46,17 +50,18 @@ impl Permissions {
             "clipboard" => self.clipboard = allowed,
             "files" => self.files = allowed,
             "device_inventory" => self.device_inventory = allowed,
+            "session_routing" => self.session_routing = allowed,
             _ => bail!("unknown capability '{capability}'"),
         }
         Ok(())
     }
 }
 
-/// Validate a requested capability list: clipboard and/or files, no repeats.
+/// Validate a requested capability list, with no repeats.
 pub fn capabilities(list: &[String]) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for c in list {
-        if c != "clipboard" && c != "files" && c != "device_inventory" {
+        if c != "clipboard" && c != "files" && c != "device_inventory" && c != "session_routing" {
             bail!("unknown capability '{c}'");
         }
         if !out.contains(c) {
@@ -64,7 +69,7 @@ pub fn capabilities(list: &[String]) -> Result<Vec<String>> {
         }
     }
     if out.is_empty() {
-        bail!("ask for clipboard, files, or both");
+        bail!("ask for at least one supported capability");
     }
     Ok(out)
 }
@@ -98,6 +103,7 @@ mod consent_tests {
         assert!(!peer.permissions.allows("files"));
         assert!(!Permissions { clipboard:true, files:true, ..Default::default() }.allows("commands"));
         assert!(!peer.permissions.allows("device_inventory"));
+        assert!(!peer.permissions.allows("session_routing"));
     }
 
     #[test]
@@ -106,6 +112,7 @@ mod consent_tests {
         assert_eq!(ok, vec!["files".to_string(), "clipboard".to_string()]);
         assert!(capabilities(&[]).is_err());
         assert!(capabilities(&["commands".into()]).is_err());
+        assert_eq!(capabilities(&["session_routing".into()]).unwrap(), vec!["session_routing".to_string()]);
         let mut p = Permissions::default();
         p.set("files", true).unwrap();
         assert!(p.has("files") && !p.has("clipboard"));
@@ -115,6 +122,10 @@ mod consent_tests {
         assert!(!p.has("device_control"));
         p.set("device_inventory", false).unwrap();
         assert!(!p.has("device_inventory"));
+        p.set("session_routing", true).unwrap();
+        assert!(p.has("session_routing") && p.allows("session_routing"));
+        p.set("session_routing", false).unwrap();
+        assert!(!p.has("session_routing") && !p.allows("session_routing"));
     }
 
     #[test]

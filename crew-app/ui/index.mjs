@@ -180,6 +180,14 @@ export default function RemoteAccessCrew() {
             onChange: e => act('permissions', { peer: p.fingerprint, capability: cap, allowed: e.target.checked },
               () => `${cap === 'clipboard' ? 'Clipboard (text and images)' : 'Files'} ${e.target.checked ? 'allowed' : 'blocked'} with ${p.name}.`) }),
           cap === 'clipboard' ? 'Clipboard' : 'Files'))),
+      h('div', { className: 'row', style: { margin: '6px 0' } },
+        h('label', { className: 'switch' },
+          h('input', { type: 'checkbox', checked: !!p.permissions?.session_routing, disabled: disabled || data?.session_routing_supported !== true,
+            'aria-label': `Crew session routing with ${p.name}`,
+            onChange: e => act('permissions', { peer: p.fingerprint, capability: 'session_routing', allowed: e.target.checked },
+              () => `Crew session routing ${e.target.checked ? 'allowed' : 'blocked'} with ${p.name}.`) }),
+          'Crew sessions'),
+        h('small', null, 'Separate approval. Lets this peer list, message, and read only sessions your router chat may address.')),
       (!p.permissions?.clipboard || !p.permissions?.files) && h('small', null, 'Both machines must allow an exchange. Ask for access sends a request the other owner approves there.'),
       h('div', { className: 'row' },
         h('button', { disabled, onClick: () => act('ping', { peer: p.fingerprint }, () => `${p.name} is reachable and trusted.`) }, busy === 'ping' ? 'Testing…' : 'Test connection'),
@@ -301,7 +309,33 @@ export default function RemoteAccessCrew() {
         h('small', null, 'Lets Crew Link reach this machine directly over the paired, encrypted link on your LAN or Tailscale. Crew Link still verifies every signed message itself.')),
       h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: crewLinkOn, disabled,
         onChange: e => act('set', { channels: e.target.checked ? [...channels.filter(c => c !== 'crew-link'), 'crew-link'] : channels.filter(c => c !== 'crew-link') },
-          () => e.target.checked ? 'Crew Link can now use this link.' : 'Crew Link channel closed.') }), crewLinkOn ? 'On' : 'Off')))
+          () => e.target.checked ? 'Crew Link can now use this link.' : 'Crew Link channel closed.') }), crewLinkOn ? 'On' : 'Off')),
+    h('div', { className: 'row spread', style: { borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 } },
+      h('div', null, h('div', { className: 'name' }, 'Crew session channel'),
+        h('small', null, 'Separate signed channel for session directory, messages, and replies. It stays closed until you enable it and approve session routing for the peer.')),
+      h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: channels.includes('crew-sessions'), disabled: disabled || data?.session_routing_supported !== true,
+        onChange: e => act('set', { channels: e.target.checked ? [...channels.filter(c => c !== 'crew-sessions'), 'crew-sessions'] : channels.filter(c => c !== 'crew-sessions') },
+          () => e.target.checked ? 'Crew session channel opened.' : 'Crew session channel closed.') }), channels.includes('crew-sessions') ? 'On' : 'Off')))
+
+  const router = data?.session_router || {}
+  const routerCard = h('div', { className: 'card' },
+    h('h2', null, 'Crew session router'),
+    h('p', null, 'Choose the local chat whose existing session permissions apply. Remote Kimi and Codex see only sessions that chat may address. They must select an exact session key.'),
+    h('label', null, 'Router chat',
+      h('select', { value: router.broker_session || '', disabled: disabled || router.enabled,
+        onChange: e => act('session-router', { enabled: false, broker_session: e.target.value, peer: router.peer || '' }) },
+        h('option', { value: '' }, 'Choose a chat'), ...(router.broker_candidates || []).map(s => h('option', { key: s.key, value: s.key }, s.title)))),
+    h('label', null, 'Paired machine',
+      h('select', { value: router.peer || '', disabled: disabled || router.enabled,
+        onChange: e => act('session-router', { enabled: false, broker_session: router.broker_session || '', peer: e.target.value }) },
+        h('option', { value: '' }, 'Choose a machine'), ...peers.map(p => h('option', { key: p.fingerprint, value: p.fingerprint }, p.name)))),
+    h('div', { className: 'row spread', style: { marginTop: 10 } },
+      h('small', null, router.running ? 'Router is running with signed requests and ordinary Crew authorization.' : 'Router is stopped. Enabling requires the channel, file access, session routing approval, and a pinned Crew Link peer key.'),
+      h('label', { className: 'switch' },
+        h('input', { type: 'checkbox', checked: !!router.enabled, disabled: disabled || (!router.enabled && (!router.broker_session || !router.peer)),
+          onChange: e => act('session-router', { enabled: e.target.checked, broker_session: router.broker_session || '', peer: router.peer || '' },
+            () => e.target.checked ? 'Crew session router enabled.' : 'Crew session router stopped.') }), router.enabled ? 'On' : 'Off')),
+    router.error && h('div', { className: 'alert', role: 'alert' }, router.error))
 
   const network = h(NetworkPanel, { api, peers, disabled })
 
@@ -319,7 +353,7 @@ export default function RemoteAccessCrew() {
     error && h('div', { className: 'alert', role: 'alert' }, error),
     notice && h('div', { className: 'notice', role: 'status' }, notice),
     h('div', { className: 'grid' },
-      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, sharing, hardwareSettings, streaming),
+      h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, sharing, hardwareSettings, streaming, routerCard),
       h('div', null, network, sendCard, activity)))
 }
 

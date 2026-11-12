@@ -31,6 +31,12 @@ often contains secrets, so the design assumes a hostile local network.
 - **Sunshine state:** linking reads an absolute local sunshine_state.json path with no links,
   a paired-device list, and a four MiB limit. Custom local installations remain supported.
 - **App channels:** a channel must be enabled, and both machines must grant the peer file access.
+- **Crew session routing:** the separate `crew-sessions` channel and the peer's
+  `session_routing` grant are both required on each machine. The owner also selects an
+  eligible local router chat. Every directory, send, and read operation uses that chat's
+  existing Crew authorization. The router never writes directly to a transcript and cannot
+  address private, app scoped, unattended, linked, mirrored, crew mode, remote executor,
+  cross-workspace, or otherwise unauthorized sessions.
 
 ## What is sent and stored
 
