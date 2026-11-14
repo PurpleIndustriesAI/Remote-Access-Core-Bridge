@@ -66,6 +66,7 @@ rac allow PEER clipboard|files on|off      grant or revoke one device's access
 rac request-access PEER [clipboard] [files] ask PEER's owner for access
 rac approve PEER | rac deny PEER            answer a pending request
 rac access-requests on|off                  let paired devices ask this machine
+rac mic on PEER [tone] / rac mic off        stream this PC's microphone to PEER (Windows)
 ```
 
 ## Access
@@ -76,6 +77,25 @@ images) and **Files** before anything is exchanged. On the device you want to us
 asks the other owner, who sees a toast (through Crew's Notification Bridge when installed),
 the request on the Crew page, and `rac status`. Approval lasts until revoked. Turn
 **Allow access requests** off to refuse all requests; the per-device switches still work.
+
+## Microphone
+
+A client can stream its default microphone to a host while you use the host remotely (Sunshine
+does not forward microphones). The host plays it into **Speakers (Steam Streaming Microphone)**,
+so voice chat, games and Command Core on the host hear it on **Microphone (Steam Streaming
+Microphone)**. Windows only; 48 kHz mono 16 bit PCM in 20 ms frames over the paired TLS link.
+
+1. On the host: `rac allow CLIENT microphone on` (or approve the client's request). It is never
+   granted back, and `rac allow CLIENT microphone off` ends a live stream at once.
+2. On the client: `rac mic on HOST`. Windows shows its microphone indicator, `rac status`
+   says MICROPHONE LIVE, and a toast appears when Crew is installed. `rac mic off` stops capture
+   immediately. `rac mic on HOST tone` sends a 440 Hz test tone instead of your voice.
+
+The host refuses to play when the two sides of the Steam device use different Default Formats,
+because that driver copies bytes without converting and voice would come out slowed and broken.
+Set **Speakers (Steam Streaming Microphone) > Properties > Advanced > Default Format** to the
+format of the microphone side (usually 1 channel, 32 bit, 44100 Hz), and keep the microphone
+side's level at 0 dB. It never falls back to the default speakers, which Sunshine streams back.
 
 ## Network helper
 

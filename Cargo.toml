@@ -1,6 +1,6 @@
 [package]
 name = "remote-access-crew"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 description = "Secure two-way clipboard, image, and file sharing between paired machines over LAN or Tailscale."
 license-file = "LICENSE"
@@ -44,6 +44,8 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 ring = "0.17.14"
 
 [target."cfg(windows)".dependencies]
+# Microphone sharing (WASAPI). Windows only, so Linux builds need no ALSA headers.
+cpal = "0.18.2"
 windows-sys = { version = "0.61.2", features = ["Win32_System_DataExchange", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_System_Registry"] }
 
 [target."cfg(windows)".build-dependencies]

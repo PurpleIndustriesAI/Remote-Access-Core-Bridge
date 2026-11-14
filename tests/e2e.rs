@@ -373,3 +373,134 @@ async fn access_request_flow() {
     assert!(call(&host, json!({"cmd": "status"})).await.unwrap()["access_requests"].as_array().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Pair a host and a client on loopback with toasts going to a fake Crew home.
+async fn mic_pair(root: &Path, base: u16) -> (PathBuf, PathBuf, String, String) {
+    let _ = std::fs::remove_dir_all(root);
+    let crew = root.join("crew");
+    std::fs::create_dir_all(crew.join("apps/notification-bridge/data")).unwrap();
+    unsafe { std::env::set_var("CODEXCREW_HOME", &crew) };
+    let host = node_dir(root, "host", base + 30);
+    let client = node_dir(root, "client", base + 40);
+    for d in [&host, &client] {
+        start(d);
+        wait_up(d).await;
+    }
+    let code = call(&host, json!({"cmd": "pair_code"})).await.unwrap()["code"].as_str().unwrap().to_string();
+    let host_fp = call(&client, json!({"cmd": "pair", "addr": format!("127.0.0.1:{}", base + 30), "code": code})).await.unwrap()["fingerprint"].as_str().unwrap().to_string();
+    let client_fp = call(&host, json!({"cmd": "status"})).await.unwrap()["peers"][0]["fingerprint"].as_str().unwrap().to_string();
+    (host, client, host_fp, client_fp)
+}
+
+async fn mic_state(dir: &Path, side: &str) -> Value {
+    call(dir, json!({"cmd": "status"})).await.unwrap()["microphone"][side].clone()
+}
+
+async fn wait_mic(dir: &Path, side: &str, live: bool) {
+    for _ in 0..100 {
+        if mic_state(dir, side).await.is_null() != live {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("microphone {side} never became {}", if live { "live" } else { "idle" });
+}
+
+/// The microphone is off until the host allows it, is never granted back, and stops on
+/// "off" at the client or a revoke at the host. Audio goes to a null sink here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn microphone_needs_host_approval_and_stops_cleanly() {
+    unsafe { std::env::set_var("RAC_MIC_NULL_SINK", "1") };
+    let root = std::env::temp_dir().join(format!("racmic{}", std::process::id()));
+    let (host, client, host_fp, client_fp) = mic_pair(&root, free_base()).await;
+    let start_tone = json!({"cmd": "mic_start", "peer": host_fp, "tone": true});
+
+    let err = call(&client, start_tone.clone()).await.unwrap_err();
+    assert!(format!("{err:#}").contains("local client approval required for microphone"), "{err:#}");
+    assert!(mic_state(&client, "sending").await.is_null(), "a refused stream turns the microphone off");
+
+    // Asking is allowed, but nothing is granted until the host owner approves, and never back.
+    call(&client, json!({"cmd": "request_access", "peer": host_fp, "capabilities": ["microphone"]})).await.unwrap();
+    assert!(!config::load_state(&host).unwrap().peers[0].permissions.microphone);
+    call(&host, json!({"cmd": "access_decision", "peer": client_fp, "approve": true})).await.unwrap();
+    assert!(config::load_state(&host).unwrap().peers[0].permissions.microphone);
+    assert!(!config::load_state(&client).unwrap().peers[0].permissions.microphone);
+
+    assert_eq!(call(&client, start_tone.clone()).await.unwrap()["device"], "test tone");
+    wait_mic(&host, "receiving", true).await;
+    assert_eq!(mic_state(&host, "receiving").await["fingerprint"], client_fp.as_str());
+    let again = call(&client, start_tone.clone()).await.unwrap_err();
+    assert!(format!("{again:#}").contains("already live"), "{again:#}");
+
+    // Off at the client: capture stops at once, and the host ends the stream.
+    assert_eq!(call(&client, json!({"cmd": "mic_stop"})).await.unwrap()["stopped"], true);
+    assert!(mic_state(&client, "sending").await.is_null());
+    wait_mic(&host, "receiving", false).await;
+
+    // Revoked at the host: the stream ends and the client's microphone turns itself off.
+    call(&client, start_tone).await.unwrap();
+    wait_mic(&host, "receiving", true).await;
+    call(&host, json!({"cmd": "permissions", "peer": client_fp, "capability": "microphone", "allowed": false})).await.unwrap();
+    wait_mic(&host, "receiving", false).await;
+    wait_mic(&client, "sending", false).await;
+    let events = call(&client, json!({"cmd": "status"})).await.unwrap()["events"].to_string();
+    assert!(events.contains("declined the microphone"), "{events}");
+    let inbox = std::fs::read_to_string(root.join("crew/apps/notification-bridge/data/inbox.jsonl")).unwrap();
+    assert!(inbox.contains("Microphone is live") && inbox.contains("Microphone is off"), "{inbox}");
+    unsafe { std::env::remove_var("RAC_MIC_NULL_SINK") };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Live check on a host with Steam: a 440 Hz test tone sent over the bridge must arrive on
+/// "Microphone (Steam Streaming Microphone)" at the right pitch, level and delay.
+/// Run: cargo test --test e2e microphone_live -- --ignored --nocapture --test-threads=1
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn microphone_live_reaches_steam_microphone() {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+    unsafe { std::env::remove_var("RAC_MIC_NULL_SINK") };
+    let root = std::env::temp_dir().join(format!("racmiclive{}", std::process::id()));
+    let (host, client, host_fp, client_fp) = mic_pair(&root, free_base()).await;
+    call(&host, json!({"cmd": "permissions", "peer": client_fp, "capability": "microphone", "allowed": true})).await.unwrap();
+
+    // Record the virtual microphone the way a host app would: (ms since start, samples) per callback.
+    let dev = cpal::default_host().input_devices().unwrap().find(|d| d.to_string() == "Microphone (Steam Streaming Microphone)").expect("Steam Streaming Microphone");
+    let cfg = dev.default_input_config().unwrap();
+    let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate() as f64);
+    let t0 = Arc::new(Mutex::new(None::<Instant>));
+    let rec = Arc::new(Mutex::new(Vec::<(f64, Vec<f32>)>::new()));
+    let (t, r) = (t0.clone(), rec.clone());
+    let stream = dev.build_input_stream(cfg.config(), move |d: &[f32], _: &_| {
+        if let Some(start) = *t.lock().unwrap() {
+            r.lock().unwrap().push((start.elapsed().as_secs_f64() * 1000.0, d.chunks(ch).map(|f| f[0]).collect()));
+        }
+    }, |e| eprintln!("capture error: {e}"), None).unwrap();
+    stream.play().unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    *t0.lock().unwrap() = Some(Instant::now());
+    let started = call(&client, json!({"cmd": "mic_start", "peer": host_fp, "tone": true})).await;
+    // Audio flows from here; the time before it is capture start plus the TLS handshake.
+    let streaming = t0.lock().unwrap().unwrap().elapsed().as_secs_f64() * 1000.0;
+    started.unwrap();
+    let secs = std::env::var("RAC_MIC_LIVE_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+    tokio::time::sleep(Duration::from_secs(secs)).await;
+    call(&client, json!({"cmd": "mic_stop"})).await.unwrap();
+    drop(stream);
+
+    let rec = rec.lock().unwrap();
+    let db = |s: &[f32]| 20.0 * ((s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt().max(1e-9) as f64).log10();
+    let first = rec.iter().find(|(_, s)| db(s) > -40.0).map(|(ms, _)| *ms).expect("the tone never reached the Steam Streaming Microphone");
+    let steady: Vec<f32> = rec.iter().filter(|(ms, _)| *ms > first + 300.0 && *ms < secs as f64 * 1000.0 - 200.0).flat_map(|(_, s)| s.clone()).collect();
+    let crossings = steady.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+    let hz = crossings as f64 / 2.0 / (steady.len() as f64 / rate);
+    let level = db(&steady);
+    eprintln!("tone heard {:.0} ms after streaming began ({streaming:.0} ms to connect); level {level:.1} dBFS; pitch {hz:.0} Hz (sent 440)", first - streaming);
+    assert!((hz - 440.0).abs() < 15.0, "pitch {hz:.0} Hz: the Steam cable formats differ");
+    assert!(level > -40.0 && level < -3.0, "level {level:.1} dBFS (sent -15 dBFS); check the Steam Streaming Microphone recording level");
+    assert!(first - streaming < 150.0, "audio took {:.0} ms", first - streaming);
+    let _ = std::fs::remove_dir_all(&root);
+}

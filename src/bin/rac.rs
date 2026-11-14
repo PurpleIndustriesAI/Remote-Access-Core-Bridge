@@ -17,9 +17,10 @@ USAGE:
   rac devices PEER                Read USB metadata after approval on that client
   rac sync on|off [--peer PEER]   Turn automatic clipboard sync on or off
   rac unpair PEER                 Forget a peer (it can no longer connect)
-  rac allow PEER clipboard|files|device_inventory on|off
-                                  Grant or revoke a paired device's clipboard or file access
-  rac request-access PEER [clipboard] [files] [device_inventory]
+  rac allow PEER clipboard|files|device_inventory|microphone on|off
+                                  Grant or revoke a paired device's access on this machine
+                                  (microphone: PEER may play into this PC's Steam Streaming Microphone)
+  rac request-access PEER [clipboard] [files] [device_inventory] [microphone]
                                   Ask PEER's owner for access (default: both); this machine
                                   allows the same exchange with PEER
   rac approve PEER | rac deny PEER
@@ -35,6 +36,10 @@ USAGE:
   rac channel on|off NAME         Accept or stop accepting files for an app channel
   rac channel-send --to PEER --channel NAME FILE
                                   Send one file on an app channel (never the clipboard)
+  rac mic on PEER [tone]          Stream this machine's default microphone to PEER, which must
+                                  allow it (tone: a 440 Hz test tone instead)
+  rac mic off                     Turn this machine's microphone stream off now
+  rac mic                         Show microphone streams
   rac version
 
 PEER is a peer name or the start of its fingerprint.";
@@ -80,6 +85,15 @@ fn resolve_peer(q: &str) -> Result<String> {
     }
 }
 
+fn print_mic(m: &Value) {
+    if let Some(o) = m["sending"].as_object() {
+        println!("MICROPHONE LIVE: {} to {}. Stop it with: rac mic off", o["device"].as_str().unwrap_or("?"), o["peer"].as_str().unwrap_or("?"));
+    }
+    if let Some(i) = m["receiving"].as_object() {
+        println!("Microphone in: {} playing into {}", i["peer"].as_str().unwrap_or("?"), i["device"].as_str().unwrap_or("?"));
+    }
+}
+
 fn on_off(v: &Value) -> &'static str {
     if v.as_bool() == Some(true) { "on" } else { "off" }
 }
@@ -97,9 +111,10 @@ fn real_main() -> Result<()> {
             println!("Access requests: {}", on_off(&s["settings"]["allow_access_requests"]));
             println!("Peers:");
             for p in s["peers"].as_array().into_iter().flatten() {
-                println!("  {}  {}  sync {}  clipboard {}  files {}  {}", p["name"].as_str().unwrap_or("?"), p["short_fingerprint"].as_str().unwrap_or(""), on_off(&p["autosync"]),
-                    on_off(&p["permissions"]["clipboard"]), on_off(&p["permissions"]["files"]), list(&p["addrs"]));
+                println!("  {}  {}  sync {}  clipboard {}  files {}  microphone {}  {}", p["name"].as_str().unwrap_or("?"), p["short_fingerprint"].as_str().unwrap_or(""), on_off(&p["autosync"]),
+                    on_off(&p["permissions"]["clipboard"]), on_off(&p["permissions"]["files"]), on_off(&p["permissions"]["microphone"]), list(&p["addrs"]));
             }
+            print_mic(&s["microphone"]);
             for r in s["access_requests"].as_array().into_iter().flatten() {
                 println!("  PENDING: {} asks for {} access. Run: rac approve \"{}\"", r["name"].as_str().unwrap_or("?"), list(&r["capabilities"]).replace(", ", " and "), r["peer"].as_str().unwrap_or("?"));
             }
@@ -325,6 +340,28 @@ fn real_main() -> Result<()> {
             }
             let r = call(json!({"cmd": "channel_send", "peer": peer.context("--to is required")?, "channel": channel.context("--channel is required")?, "path": file.context("a file is required")?}))?;
             println!("Delivered {} bytes to {}", r["bytes"], r["peer"].as_str().unwrap_or("?"));
+            Ok(())
+        }
+        "mic" => {
+            match args.get(1).map(String::as_str) {
+                Some("on") => {
+                    let fp = resolve_peer(args.get(2).context("use: rac mic on PEER [tone]")?)?;
+                    let r = call(json!({"cmd": "mic_start", "peer": fp, "tone": args.get(3).map(String::as_str) == Some("tone")}))?;
+                    println!("MICROPHONE LIVE: {} to {}. Stop it with: rac mic off", r["device"].as_str().unwrap_or("?"), r["peer"].as_str().unwrap_or("?"));
+                }
+                Some("off") => {
+                    let r = call(json!({"cmd": "mic_stop"}))?;
+                    println!("{}", if r["stopped"].as_bool() == Some(true) { "Microphone off." } else { "The microphone was not live." });
+                }
+                None => {
+                    let s = call(json!({"cmd": "status"}))?;
+                    print_mic(&s["microphone"]);
+                    if s["microphone"]["sending"].is_null() && s["microphone"]["receiving"].is_null() {
+                        println!("No microphone stream.");
+                    }
+                }
+                _ => bail!("use: rac mic on PEER [tone] | rac mic off | rac mic"),
+            }
             Ok(())
         }
         "version" | "--version" => {

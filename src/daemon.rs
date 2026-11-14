@@ -2,6 +2,7 @@
 
 use crate::clip::{self, ClipHandle, Content};
 use crate::config::{self, Identity, Peer, State, short_fingerprint};
+use crate::mic;
 use crate::moonlight;
 use crate::net;
 use crate::proto::{self, FileEntry, Msg, Reply};
@@ -75,6 +76,22 @@ pub struct Node {
     /// Pending access requests by peer fingerprint. Only paired peers can add one.
     requests: Mutex<std::collections::HashMap<String, AccessAsk>>,
     device_query: tokio::sync::Mutex<Option<Instant>>,
+    mic: Mutex<MicSessions>,
+}
+
+/// Live microphone streams. Each has an id so a newer stream or a stop ends the right one.
+#[derive(Default)]
+struct MicSessions {
+    next: u64,
+    out: Option<MicOut>,
+    inbound: Option<(u64, Value)>,
+}
+
+/// This machine's microphone going to a peer. Dropping it turns the microphone off.
+struct MicOut {
+    id: u64,
+    info: Value,
+    _capture: mic::Capture,
 }
 
 fn now() -> u64 {
@@ -168,6 +185,7 @@ pub async fn run(opts: Options) -> Result<()> {
         link_limiter: moonlight::Limiter::default(),
         requests: Mutex::new(Default::default()),
         device_query: tokio::sync::Mutex::new(None),
+        mic: Mutex::new(MicSessions::default()),
     });
     node.sync_trust();
     eprintln!("[rac] Remote Access Core (Bridge) {} listening on port {port}; identity {}", env!("CARGO_PKG_VERSION"), short_fingerprint(&node.id.fingerprint));
@@ -465,6 +483,37 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
             }
             r.map(|_| ())
         }
+        Msg::Mic { codec } => {
+            require_permission(node, fp, "microphone")?;
+            if codec != mic::CODEC {
+                bail!("unsupported microphone format '{codec}'; update both bridges");
+            }
+            let player = tokio::task::spawn_blocking(mic::Player::open).await??;
+            let id = {
+                let mut m = node.mic.lock().unwrap();
+                m.next += 1;
+                m.inbound = Some((m.next, json!({"peer": peer, "fingerprint": fp, "device": player.device, "since": now()})));
+                m.next
+            };
+            proto::write_json(s, &Reply::ok()).await?;
+            node.event("in", peer, "microphone", 0, true, format!("live, playing into {}", player.device));
+            let r = mic_play(node, s, fp, transport, id, &player).await;
+            {
+                let mut m = node.mic.lock().unwrap();
+                if m.inbound.as_ref().is_some_and(|(i, _)| *i == id) {
+                    m.inbound = None;
+                }
+            }
+            let stats = {
+                let j = player.jitter.lock().unwrap();
+                format!("{} late samples dropped, {} underruns", j.dropped, j.underruns)
+            };
+            match &r {
+                Ok((bytes, why)) => node.event("in", peer, "microphone", *bytes, true, format!("{why}; {stats}")),
+                Err(e) => node.event("in", peer, "microphone", 0, false, format!("{e:#}; {stats}")),
+            }
+            r.map(|_| ())
+        }
         Msg::Echo { n } => {
             if n > proto::MAX_ECHO {
                 bail!("too many probes");
@@ -545,6 +594,12 @@ async fn receive<S: AsyncRead + AsyncWrite + Unpin>(node: &Node, s: &mut S, msg:
 /// Toast the owner through Crew's Notification Bridge when it is installed. Best effort:
 /// the request is also in the activity list, the Crew page and `rac status`.
 fn notify_owner(host: &str, peer: &str, fp: &str, what: &str) {
+    toast("remote-access-crew.access-requests", format!("{}-{}", &fp[..fp.len().min(16)], now()), format!("{peer} asks for {what} access"),
+        format!("Remote Access Core (Bridge) on {host}. Approve or deny on the Remote Access Core page, or run: rac approve \"{fp}\""));
+}
+
+/// Best effort toast through Crew's Notification Bridge, when it is installed.
+fn toast(channel: &str, group_key: String, title: String, body: String) {
     let base = std::env::var_os("CODEXCREW_HOME").map(PathBuf::from).or_else(|| {
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".codex-crew"))
     });
@@ -554,16 +609,16 @@ fn notify_owner(host: &str, peer: &str, fp: &str, what: &str) {
     }
     let note = json!({
         "desktop_route": "notification-bridge",
-        "channel": "remote-access-crew.access-requests",
-        "group_key": format!("{}-{}", &fp[..fp.len().min(16)], now()),
-        "title": format!("{peer} asks for {what} access"),
-        "body": format!("Remote Access Core (Bridge) on {host}. Approve or deny on the Remote Access Core page, or run: rac approve \"{fp}\""),
+        "channel": channel,
+        "group_key": group_key,
+        "title": title,
+        "body": body,
         "app": "remote-access-crew",
     });
     let line = format!("{note}\n");
     let r = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("inbox.jsonl")).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
     if let Err(e) = r {
-        eprintln!("[rac] could not queue the access request notification: {e}");
+        eprintln!("[rac] could not queue a notification: {e}");
     }
 }
 
@@ -1054,6 +1109,161 @@ async fn send_to(node: &Arc<Node>, target: Option<String>, c: Content, explicit:
     Ok(results)
 }
 
+/// Play one inbound microphone stream until the sender stops, access is revoked, or a newer
+/// stream replaces it. Returns the bytes played and why it ended.
+async fn mic_play<S: AsyncRead + Unpin>(node: &Node, s: &mut S, fp: &str, transport: &str, id: u64, player: &mic::Player) -> Result<(u64, &'static str)> {
+    let (mut bytes, mut n) = (0u64, 0u64);
+    loop {
+        let Some(frame) = tokio::time::timeout(Duration::from_secs(2), mic::read_frame(s)).await.context("the sender went quiet")?? else {
+            return Ok((bytes, "stopped by the sender"));
+        };
+        if node.mic.lock().unwrap().inbound.as_ref().map(|(i, _)| *i) != Some(id) {
+            return Ok((bytes, "replaced by a newer stream"));
+        }
+        // Revoking access ends the stream at the next frame.
+        if !node.peer(fp).is_some_and(|p| p.permissions.microphone) {
+            bail!("microphone access was revoked on this machine");
+        }
+        n += 1;
+        if n % 50 == 0 {
+            require_permission(node, fp, "microphone")?;
+            if !node.state.lock().unwrap().settings.transport.allows(transport) {
+                bail!("{transport} sharing was turned off on this machine");
+            }
+        }
+        bytes += frame.len() as u64 * 2;
+        player.jitter.lock().unwrap().push(&frame);
+    }
+}
+
+/// The peer refused the microphone stream, as opposed to the link dropping.
+#[derive(Debug)]
+struct Declined(String);
+
+impl std::fmt::Display for Declined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Declined {}
+
+async fn mic_connect(node: &Node, peer: &Peer) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
+    let (mut t, _) = connect(node, peer).await?;
+    verify_transport(node, peer, &mut t).await?;
+    proto::write_json(&mut t, &Msg::Mic { codec: mic::CODEC.to_string() }).await?;
+    let go: Reply = tokio::time::timeout(IO_TIMEOUT, proto::read_json(&mut t)).await.context("no answer to the microphone stream")?
+        .with_context(|| format!("{} closed the microphone stream; it may need bridge {} or newer", peer.name, env!("CARGO_PKG_VERSION")))?;
+    if !go.ok {
+        return Err(Declined(format!("{} declined the microphone: {}", peer.name, go.error.unwrap_or_default())).into());
+    }
+    Ok(t)
+}
+
+/// Stream this machine's microphone (or a test tone) to one peer until `mic_stop`.
+async fn mic_start(node: &Arc<Node>, fp: &str, tone: bool) -> Result<Value> {
+    const LIVE: &str = "the microphone is already live; stop it first (rac mic off)";
+    let peer = node.peer(fp).context("unknown peer")?;
+    if node.mic.lock().unwrap().out.is_some() {
+        bail!(LIVE);
+    }
+    let (capture, rx) = tokio::task::spawn_blocking(move || mic::Capture::start(tone)).await??;
+    // Connect here so a refusal reaches the caller; dropping `capture` on error turns the
+    // microphone off again.
+    let t = mic_connect(node, &peer).await?;
+    let device = capture.device.clone();
+    let info = json!({"peer": peer.name, "fingerprint": peer.fingerprint, "device": device, "since": now()});
+    let id = {
+        let mut m = node.mic.lock().unwrap();
+        if m.out.is_some() {
+            bail!(LIVE);
+        }
+        m.next += 1;
+        m.out = Some(MicOut { id: m.next, info: info.clone(), _capture: capture });
+        m.next
+    };
+    node.event("out", &peer.name, "microphone", 0, true, format!("live from {device}"));
+    toast("remote-access-crew.microphone", format!("microphone.{}", now()), format!("Microphone is live to {}", peer.name),
+        format!("{device} is streaming to {}. Stop it with: rac mic off", peer.name));
+    let n = node.clone();
+    tokio::spawn(async move { mic_pump(n, peer, id, t, rx).await });
+    Ok(info)
+}
+
+enum PumpEnd {
+    Stopped,
+    Silent,
+    Lost(anyhow::Error),
+}
+
+async fn pump_once<S: AsyncWrite + Unpin>(t: &mut S, rx: &mut tokio::sync::mpsc::Receiver<Vec<i16>>, sent: &mut u64) -> PumpEnd {
+    let mut buf: Vec<i16> = Vec::with_capacity(mic::FRAME * 2);
+    loop {
+        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            Err(_) => return PumpEnd::Silent,
+            Ok(None) => return PumpEnd::Stopped,
+            Ok(Some(chunk)) => buf.extend(chunk),
+        }
+        while buf.len() >= mic::FRAME {
+            match tokio::time::timeout(Duration::from_secs(2), mic::write_frame(t, &buf[..mic::FRAME])).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return PumpEnd::Lost(e),
+                Err(_) => return PumpEnd::Lost(anyhow!("the link stalled")),
+            }
+            buf.drain(..mic::FRAME);
+            *sent += (mic::FRAME * 2) as u64;
+        }
+    }
+}
+
+/// Send microphone audio until it is stopped, reconnecting for up to 30 s if the link drops.
+async fn mic_pump(node: Arc<Node>, peer: Peer, id: u64, mut t: tokio_rustls::client::TlsStream<TcpStream>, mut rx: tokio::sync::mpsc::Receiver<Vec<i16>>) {
+    let mut sent = 0u64;
+    let end: Result<&str> = 'stream: loop {
+        // Audio captured while connecting is stale; the host would only drop it.
+        while rx.try_recv().is_ok() {}
+        let lost = match pump_once(&mut t, &mut rx, &mut sent).await {
+            PumpEnd::Stopped => break Ok("stopped"),
+            PumpEnd::Silent => break Err(anyhow!("the microphone stopped delivering audio")),
+            PumpEnd::Lost(e) => e,
+        };
+        node.event("out", &peer.name, "microphone", sent, false, format!("link lost, reconnecting: {lost:#}"));
+        let since = Instant::now();
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if rx.is_closed() {
+                break 'stream Ok("stopped");
+            }
+            match mic_connect(&node, &peer).await {
+                Ok(nt) => {
+                    t = nt;
+                    continue 'stream;
+                }
+                Err(e) if e.is::<Declined>() || since.elapsed() > Duration::from_secs(30) => break 'stream Err(e),
+                Err(_) => {}
+            }
+        }
+    };
+    t.shutdown().await.ok();
+    // Still ours means it ended by itself, not by the owner: turn the microphone off and say why.
+    let ended_itself = {
+        let mut m = node.mic.lock().unwrap();
+        let mine = m.out.as_ref().is_some_and(|o| o.id == id);
+        if mine {
+            m.out = None;
+        }
+        mine
+    };
+    match &end {
+        Ok(why) => node.event("out", &peer.name, "microphone", sent, true, *why),
+        Err(e) => node.event("out", &peer.name, "microphone", sent, false, format!("stopped: {e:#}")),
+    }
+    if ended_itself {
+        let why = end.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "capture ended".into());
+        toast("remote-access-crew.microphone", format!("microphone.{}", now()), "Microphone is off".into(), format!("Streaming to {} stopped: {why}", peer.name));
+    }
+}
+
 async fn ping(node: &Node, fp: &str) -> Result<()> {
     let peer = node.peer(fp).context("unknown peer")?;
     deliver(node, &peer, &Outgoing { msg: Msg::Ping, body: Body::None, bytes: 0 }).await
@@ -1272,11 +1482,17 @@ fn status(node: &Node) -> Value {
         None => json!({"open": false}),
     };
     let events: Vec<Event> = node.events.lock().unwrap().iter().take(60).cloned().collect();
+    let microphone = {
+        let m = node.mic.lock().unwrap();
+        json!({"sending": m.out.as_ref().map(|o| o.info.clone()), "receiving": m.inbound.as_ref().map(|(_, v)| v.clone())})
+    };
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "permissions_version": 1,
         "device_inventory_supported": cfg!(windows),
         "session_routing_supported": true,
+        "microphone_supported": cfg!(windows),
+        "microphone": microphone,
         "name": node.name,
         "fingerprint": node.id.fingerprint,
         "short_fingerprint": short_fingerprint(&node.id.fingerprint),
@@ -1358,8 +1574,8 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
                 .collect::<Result<Vec<_>>>()?;
             let caps = config::capabilities(&list)?;
             let peer = node.peer(fp).context("unknown peer")?;
-            // Clipboard and files retain reciprocal consent. Hardware never does.
-            let reciprocal: Vec<String> = caps.iter().filter(|c| c.as_str() != "device_inventory").cloned().collect();
+            // Clipboard and files retain reciprocal consent. Hardware and the microphone never do.
+            let reciprocal: Vec<String> = caps.iter().filter(|c| !["device_inventory", "microphone"].contains(&c.as_str())).cloned().collect();
             if !reciprocal.is_empty() {
                 grant(node, fp, &reciprocal, true)?;
             }
@@ -1397,6 +1613,17 @@ async fn control(node: &Arc<Node>, req: &Value) -> Result<Value> {
             node.sync_trust();
             node.save()?;
             Ok(json!({}))
+        }
+        "mic_start" => mic_start(node, str_arg(req, "peer")?, req.get("tone").and_then(Value::as_bool).unwrap_or(false)).await,
+        "mic_stop" => {
+            // The capture is dropped inside this statement, before anything slower runs.
+            let info = node.mic.lock().unwrap().out.take().map(|o| o.info);
+            if let Some(i) = &info {
+                let to = i["peer"].as_str().unwrap_or("?");
+                node.event("local", to, "microphone", 0, true, "turned off");
+                toast("remote-access-crew.microphone", format!("microphone.{}", now()), "Microphone is off".into(), format!("Stopped streaming to {to}."));
+            }
+            Ok(json!({"stopped": info.is_some()}))
         }
         "ping" => {
             ping(node, str_arg(req, "peer")?).await?;

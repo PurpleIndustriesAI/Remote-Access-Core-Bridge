@@ -42,6 +42,9 @@ pub enum Msg {
     AccessRequest { capabilities: Vec<String> },
     /// Both peers prove their local transport consent before any content is sent.
     VerifyTransport { transport: String, policy: TransportPolicy },
+    /// Live microphone audio for this machine's virtual microphone. Frames (see `mic`) follow
+    /// the go ahead reply until the sender closes the connection.
+    Mic { codec: String },
 }
 
 pub const MAX_ECHO: u32 = 200;

@@ -21,6 +21,9 @@ pub struct Permissions {
     pub device_inventory: bool,
     #[serde(default)]
     pub session_routing: bool,
+    /// This peer may play its microphone into this machine's virtual microphone.
+    #[serde(default)]
+    pub microphone: bool,
 }
 
 impl Permissions {
@@ -30,6 +33,7 @@ impl Permissions {
             "files" => self.files,
             "device_inventory" => self.device_inventory,
             "session_routing" => self.session_routing,
+            "microphone" => self.microphone,
             _ => false,
         }
     }
@@ -41,6 +45,7 @@ impl Permissions {
             "files" => self.files,
             "device_inventory" => self.device_inventory,
             "session_routing" => self.session_routing,
+            "microphone" => self.microphone,
             _ => false,
         }
     }
@@ -51,6 +56,7 @@ impl Permissions {
             "files" => self.files = allowed,
             "device_inventory" => self.device_inventory = allowed,
             "session_routing" => self.session_routing = allowed,
+            "microphone" => self.microphone = allowed,
             _ => bail!("unknown capability '{capability}'"),
         }
         Ok(())
@@ -61,7 +67,7 @@ impl Permissions {
 pub fn capabilities(list: &[String]) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for c in list {
-        if c != "clipboard" && c != "files" && c != "device_inventory" && c != "session_routing" {
+        if !["clipboard", "files", "device_inventory", "session_routing", "microphone"].contains(&c.as_str()) {
             bail!("unknown capability '{c}'");
         }
         if !out.contains(c) {
@@ -104,6 +110,7 @@ mod consent_tests {
         assert!(!Permissions { clipboard:true, files:true, ..Default::default() }.allows("commands"));
         assert!(!peer.permissions.allows("device_inventory"));
         assert!(!peer.permissions.allows("session_routing"));
+        assert!(!peer.permissions.allows("microphone"));
     }
 
     #[test]
