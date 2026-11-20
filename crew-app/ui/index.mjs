@@ -296,14 +296,14 @@ export default function RemoteAccessCrew() {
     h('div', { className: 'row spread' },
       h('div', null, h('div', { className: 'name' }, 'Moonlight link (host)'),
         h('small', null, linkOn
-          ? 'On. Sunshine paired clients can link without a code. Approve clipboard and files for each device below. Access also requires that its Sunshine pairing remains active.'
-          : 'Off. Turning it on lets Sunshine paired clients link without a code. Linking grants no clipboard or file access; approve each device below.')),
+          ? 'On. RAC Host paired clients can link without a code. Approve clipboard and files for each device below. Access also requires that its host pairing remains active.'
+          : 'Off. Turning it on lets RAC Host paired clients link without a code. Linking grants no clipboard or file access; approve each device below.')),
       h('span', { className: `chip ${linkOn ? 'ok' : ''}` }, linkOn ? 'On' : 'Off')),
     h('div', { className: 'row', style: { margin: '8px 0 4px' } },
       linkOn
         ? h('button', { disabled, onClick: () => act('host-link', { remove: true }, r => r.message) }, busy === 'host-link' ? 'Working…' : 'Turn off')
-        : h('button', { className: 'primary', disabled, onClick: () => act('host-link', {}, r => r.message) }, busy === 'host-link' ? 'Waiting for Windows approval…' : 'Turn on and publish to Sunshine')),
-    h('small', null, 'Publishing adds this machine’s identity to Sunshine’s app list (the client hides it) and restarts Sunshine, so Windows asks for approval once. It will not run while a stream is live.'),
+        : h('button', { className: 'primary', disabled, onClick: () => act('host-link', {}, r => r.message) }, busy === 'host-link' ? 'Waiting for Windows approval…' : 'Turn on and publish to the RAC Host')),
+    h('small', null, 'Publishing adds this machine’s identity to the RAC Host’s app list (the client hides it) and restarts the host, so Windows asks for approval once. It will not run while a stream is live.'),
     h('div', { className: 'row spread', style: { borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 } },
       h('div', null, h('div', { className: 'name' }, 'Crew Link channel'),
         h('small', null, 'Lets Crew Link reach this machine directly over the paired, encrypted link on your LAN or Tailscale. Crew Link still verifies every signed message itself.')),

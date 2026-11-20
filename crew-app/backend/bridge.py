@@ -125,9 +125,9 @@ def host_link_script() -> Path | None:
 
 def host_link_setup(remove: bool = False) -> str:
     """Run the host setup script hidden. Windows shows its own approval prompt once,
-    because publishing the identity edits Sunshine's app list and restarts Sunshine."""
+    because publishing the identity edits the RAC Host's app list and restarts the host."""
     if os.name != 'nt':
-        raise BridgeError('Publishing to Sunshine is a Windows host step.')
+        raise BridgeError('Publishing to the RAC Host is a Windows host step.')
     script = host_link_script()
     if script is None:
         raise BridgeError('host-moonlight-link.ps1 is missing; reinstall Remote Access Core (Bridge).')
@@ -137,7 +137,7 @@ def host_link_setup(remove: bool = False) -> str:
     done = subprocess.run(args, capture_output=True, text=True, timeout=300, creationflags=0x08000000)
     out = (done.stdout or '').strip().splitlines()
     if done.returncode != 0:
-        raise BridgeError(((done.stderr or '').strip().splitlines() or ['Sunshine update failed'])[-1])
+        raise BridgeError(((done.stderr or '').strip().splitlines() or ['RAC Host update failed'])[-1])
     return out[-1] if out else 'Done.'
 
 

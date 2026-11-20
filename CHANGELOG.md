@@ -15,6 +15,14 @@ subjects they summarize.
   duplicate box art. (1b112da, cd257ee)
 * This changelog.
 
+### Changed
+* User-facing copy says "RAC Host" instead of "Sunshine": the Crew app
+  streaming card, the host-link error strings in `crew-app/backend/bridge.py`,
+  and the README microphone section. Underlying technical identifiers and
+  architecture references (`sunshine_state.json`, `~/.config/sunshine`,
+  ROADMAP rebrand history) are unchanged by the project's rename policy:
+  shown names are RAC, interfaces stay upstream.
+
 ## 0.7.0 — 2026-11-20
 
 ### Added

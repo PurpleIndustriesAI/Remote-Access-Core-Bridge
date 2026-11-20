@@ -80,8 +80,8 @@ the request on the Crew page, and `rac status`. Approval lasts until revoked. Tu
 
 ## Microphone
 
-A client can stream its default microphone to a host while you use the host remotely (Sunshine
-does not forward microphones). The host plays it into **Speakers (Steam Streaming Microphone)**,
+A client can stream its default microphone to a host while you use the host remotely (the RAC
+Host's Sunshine core does not forward microphones). The host plays it into **Speakers (Steam Streaming Microphone)**,
 so voice chat, games and Command Core on the host hear it on **Microphone (Steam Streaming
 Microphone)**. Windows only; 48 kHz mono 16 bit PCM in 20 ms frames over the paired TLS link.
 
@@ -95,7 +95,7 @@ The host refuses to play when the two sides of the Steam device use different De
 because that driver copies bytes without converting and voice would come out slowed and broken.
 Set **Speakers (Steam Streaming Microphone) > Properties > Advanced > Default Format** to the
 format of the microphone side (usually 1 channel, 32 bit, 44100 Hz), and keep the microphone
-side's level at 0 dB. It never falls back to the default speakers, which Sunshine streams back.
+side's level at 0 dB. It never falls back to the default speakers, which the RAC Host streams back.
 
 ## Network helper
 
