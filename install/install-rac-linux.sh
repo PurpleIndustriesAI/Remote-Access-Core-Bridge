@@ -152,6 +152,58 @@ EOF
     chmod 600 "$HOST_CONF_DIR/sunshine.conf"
 fi
 
+# Deduplicate stock Linux desktop tiles (remove redundant "Low Res Desktop" / duplicate "Desktop")
+HOST_APPS_JSON="$HOST_CONF_DIR/apps.json"
+if [ -f "$HOST_APPS_JSON" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$HOST_APPS_JSON" << 'PYEOF'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(0)
+apps = data.get("apps")
+if not isinstance(apps, list):
+    sys.exit(0)
+has_desktop = any((a.get("name") or "").strip().lower() == "desktop" for a in apps if isinstance(a, dict))
+if not has_desktop:
+    sys.exit(0)
+kept = []
+saw_desktop = False
+for a in apps:
+    if not isinstance(a, dict):
+        kept.append(a)
+        continue
+    nm = (a.get("name") or "").strip().lower()
+    if nm == "low res desktop":
+        continue
+    if nm == "desktop":
+        if saw_desktop:
+            continue
+        saw_desktop = True
+    kept.append(a)
+if len(kept) != len(apps):
+    data["apps"] = kept
+    p.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
+PYEOF
+    chmod 600 "$HOST_APPS_JSON" 2>/dev/null || true
+elif [ ! -f "$HOST_APPS_JSON" ]; then
+    cat > "$HOST_APPS_JSON" << 'EOF'
+{
+    "env": {
+        "PATH": "$(PATH):$(HOME)/.local/bin"
+    },
+    "apps": [
+        {
+            "name": "Desktop",
+            "image-path": "desktop.png"
+        }
+    ]
+}
+EOF
+    chmod 600 "$HOST_APPS_JSON"
+fi
+
 systemctl --user disable --now sunshine 2>/dev/null || true
 cat > "$HOME/.config/systemd/user/rac-host.service" << EOF
 [Unit]
