@@ -176,13 +176,16 @@ for a in apps:
         continue
     nm = (a.get("name") or "").strip().lower()
     if nm == "low res desktop":
+        a["name"] = "Low Res Desktop"
+        a.pop("image-path", None)
+        kept.append(a)
         continue
     if nm == "desktop":
         if saw_desktop:
             continue
         saw_desktop = True
     kept.append(a)
-if len(kept) != len(apps):
+if kept != apps:
     data["apps"] = kept
     p.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
 PYEOF
