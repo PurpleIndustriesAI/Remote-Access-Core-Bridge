@@ -6,6 +6,15 @@ subjects they summarize.
 ## Unreleased (branch: feat/rac-linux-windows-branded-installers)
 
 ### Added
+* Visible GUI setup wizard on the Crew page: a step-by-step flow (bridge
+  running, pair a device, approve clipboard and files, open crew-link and
+  crew-sessions channels, read-only host verification, live link test,
+  one-click no-secrets handoff notes) so the full machine checklist runs
+  from the GUI. Two new owner-gated routes, `GET /rac/wizard-check` and
+  `POST /rac/wizard-notes`, plus a stdlib-only `crew-app/backend/wizard.py`;
+  every wizard action reuses the existing audited endpoints. 22 new unit
+  tests in `crew-app/tests/test_wizard.py`. Crew app version 0.6.2.
+  (a97f646)
 * Complete Linux installer `install/install-rac-linux.sh` plus Windows
   installer and hardware driver setup: one script that installs and brands
   the RAC Host, Bridge v0.7.0, and Client exclusively as Remote Access
