@@ -9,6 +9,17 @@ A native bridge (`remote-access-crew`) runs on each machine. Paired machines syn
 clipboard (text, images, files) automatically and accept on-demand sends. The `rac` CLI
 and the Crew page at `/apps/remote-access-crew` control the bridge on this machine.
 
+## Setup wizard (GUI)
+
+The Crew page opens with a visible step-by-step **Setup wizard**: bridge running, pair a
+device, approve clipboard and files, open the `crew-link` and `crew-sessions` channels,
+read-only host verification (RAC Host service, `/dev/uinput` permissions, `apps.json`
+desktop entries, LAN-only firewall), a live link test, and one-click no-secrets handoff
+notes to a paired machine. Every wizard action reuses the same audited, owner-gated
+endpoints as the rest of the page (`GET /rac/wizard-check`, `POST /rac/wizard-notes`).
+Use it before saying a machine is fully set up; a green `7/7 complete` chip means every
+step passed live.
+
 ## Commands
 
 - `rac status`: this machine, peers, recent transfers (type and size only).

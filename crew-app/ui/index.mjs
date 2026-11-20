@@ -44,6 +44,19 @@ const css = `
 .rac .notice{border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:12px}
 .rac .switch{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:var(--muted);flex:none;min-width:0;flex-direction:row}
 @media(max-width:820px){.rac .grid{grid-template-columns:1fr}.rac{padding:16px}}
+.rac .wiz-steps{display:flex;flex-direction:column;gap:0}
+.rac .wiz-step{display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;padding:12px 0;border-top:1px solid var(--border)}
+.rac .wiz-step:first-child{border-top:0}
+.rac .wiz-dot{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:1px solid var(--border);color:var(--muted)}
+.rac .wiz-dot.done{background:#047857;border-color:#047857;color:#fff}
+.rac .wiz-dot.next{border-color:var(--accent,#7c3aed);color:var(--accent,#7c3aed)}
+.rac .wiz-title{font-weight:600;font-size:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rac .wiz-body{color:var(--muted);font-size:12px;line-height:1.55;margin-top:4px}
+.rac .wiz-check{display:flex;gap:8px;align-items:baseline;font-size:12px;margin:4px 0}
+.rac .wiz-check .fix{color:var(--muted)}
+.rac .wiz-progress{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin:10px 0 2px}
+.rac .wiz-progress > div{height:100%;background:#047857;border-radius:3px;transition:width .4s}
+.rac .wiz-notes{width:100%;min-height:140px;font:12px/1.5 ui-monospace,Consolas,monospace;margin-top:8px}
 `
 
 function Logo({ size = 28 }) {
@@ -352,6 +365,7 @@ export default function RemoteAccessCrew() {
   return h('main', { className: 'rac' }, h('style', null, css), header,
     error && h('div', { className: 'alert', role: 'alert' }, error),
     notice && h('div', { className: 'notice', role: 'status' }, notice),
+    h(Wizard, { api, act, data, bridge, disabled }),
     h('div', { className: 'grid' },
       h('div', null, thisMachine, requests.length ? accessCard : null, peerList, requests.length ? null : accessCard, pairCard, sharing, hardwareSettings, streaming, routerCard),
       h('div', null, network, sendCard, activity)))
@@ -433,4 +447,109 @@ function NetworkPanel({ api, peers, disabled }) {
         test.latency && h('div', null, `Latency ${test.latency.avg_ms.toFixed(1)} ms · jitter ${test.latency.jitter_ms.toFixed(1)} ms · delayed ${test.latency.spike_pct.toFixed(0)}%`),
         h('div', { style: { marginTop: 6, fontWeight: 600 } }, `Set Moonlight's video bitrate to about ${test.recommended_moonlight_mbps} Mbps`),
         h('small', null, 'Moonlight: Settings, Video bitrate. Higher than this risks stutter and blocky frames on this link.'))))
+}
+
+// Setup wizard: one visible, step-by-step flow that takes a machine from a fresh
+// bridge install to a fully verified RAC link, entirely from this page.
+// Every action reuses the same audited endpoints the rest of the page uses.
+function Wizard({ api, act, data, bridge, disabled }) {
+  const [open, setOpen] = useState(null)
+  const [checks, setChecks] = useState(null)
+  const [checking, setChecking] = useState(false)
+  const [tested, setTested] = useState('')
+  const [notesText, setNotesText] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  const peers = data?.peers || []
+  const channels = data?.settings?.channels || []
+  const linkOn = channels.includes('crew-link')
+  const sessionsOn = channels.includes('crew-sessions')
+  const approvedPeer = peers.find(p => p.permissions?.clipboard && p.permissions?.files)
+  const checksOk = !!checks && checks.checks.every(c => c.status === 'ok' || c.status === 'na')
+  const checksRan = !!checks
+
+  const steps = [
+    { title: 'Bridge', done: bridge === 'running' && !!data,
+      body: bridge === 'running'
+        ? `Remote Access Core (Bridge) v${data?.version || '?'} is running as ${data?.name || 'this machine'}.`
+        : 'The bridge is not running yet. Run the app installer (install.sh on Linux, install.ps1 on Windows) and reopen this page.' },
+    { title: 'Pair a device', done: peers.length > 0,
+      body: peers.length
+        ? `Paired with ${peers.map(p => p.name).join(', ')}. Pair more devices from the "Pair a device" card below.`
+        : 'No devices paired yet. Show a pairing code below, or enter the code shown on the other machine.',
+      action: h('button', { disabled: disabled || bridge !== 'running', onClick: () => act('pair-code') }, 'Show a pairing code') },
+    { title: 'Approve clipboard and files', done: !!approvedPeer,
+      body: approvedPeer
+        ? `Clipboard and file access approved with ${approvedPeer.name}. Both machines must allow it for transfers to flow.`
+        : 'Allow clipboard and file access for each paired device. This also asks the other machine for matching access.',
+      action: peers.length && h('div', { className: 'row', style: { marginTop: 8 } },
+        ...peers.filter(p => !p.permissions?.clipboard || !p.permissions?.files).map(p =>
+          h('button', { key: p.fingerprint, disabled, onClick: () => act('request-access', { peer: p.fingerprint, capabilities: ['clipboard', 'files'] },
+            () => `Local clipboard and file access approved for ${p.name}; its owner approves the same there.`) },
+          `Allow and ask ${p.name}`))) },
+    { title: 'Open Crew channels', done: linkOn && sessionsOn,
+      body: 'crew-link lets Crew Link reach this machine over the paired link; crew-sessions carries signed session routing.',
+      action: h('div', { className: 'row', style: { marginTop: 8 } },
+        h('button', { disabled, onClick: () => act('set', { channels: linkOn ? channels.filter(c => c !== 'crew-link') : [...new Set([...channels, 'crew-link'])] },
+          () => linkOn ? 'Crew Link channel closed.' : 'Crew Link channel opened.') }, linkOn ? 'crew-link: on' : 'Turn on crew-link'),
+        h('button', { disabled, onClick: () => act('set', { channels: sessionsOn ? channels.filter(c => c !== 'crew-sessions') : [...new Set([...channels, 'crew-sessions'])] },
+          () => sessionsOn ? 'Crew session channel closed.' : 'Crew session channel opened.') }, sessionsOn ? 'crew-sessions: on' : 'Turn on crew-sessions')) },
+    { title: 'Verify the host', done: checksOk,
+      body: 'Read-only checks of the RAC Host service, /dev/uinput permissions, apps.json desktop entries, and the LAN-only firewall.',
+      action: h('div', { className: 'row', style: { marginTop: 8 } },
+        h('button', { disabled: disabled || checking, onClick: async () => {
+          setChecking(true)
+          try { const r = await api.get(`${BASE}/wizard-check`); setChecks(r.result) }
+          catch (e) { setChecks({ error: e.message }) }
+          finally { setChecking(false) }
+        } }, checking ? 'Checking…' : 'Run host checks')),
+      detail: checks?.error ? h('div', { className: 'wiz-check', role: 'alert' }, checks.error)
+        : checksRan && (checks.checks || []).map(c => h('div', { key: c.id, className: 'wiz-check' },
+          h('span', { className: `chip ${c.status === 'ok' ? 'ok' : c.status === 'warn' ? 'warn' : ''}` },
+            c.status === 'ok' ? 'PASS' : c.status === 'warn' ? 'WARN' : c.status === 'fail' ? 'FAIL' : 'N/A'),
+          h('span', null, `${c.label}: ${c.detail}`, c.fix && c.status !== 'ok' && h('span', { className: 'fix' }, ` Fix: ${c.fix}`)))) },
+    { title: 'Test the link live', done: !!tested,
+      body: tested ? 'A live ping succeeded over the paired, encrypted link.'
+        : 'Ping a paired device and push a short test text through the real transfer path.',
+      action: peers.length && h('div', { className: 'row', style: { marginTop: 8 } },
+        ...peers.map(p => h('button', { key: p.fingerprint, disabled, onClick: () => act('ping', { peer: p.fingerprint },
+          () => { setTested(p.fingerprint); return `${p.name} is reachable and trusted.` }) }, `Ping ${p.name}`)),
+        approvedPeer && h('button', { disabled, onClick: () => act('send', { peer: approvedPeer.fingerprint, text: 'RAC wizard test: clipboard round trip at ' + new Date().toLocaleTimeString() },
+          () => 'Test text delivered; it is now on the other machine\u2019s clipboard.') }, 'Send test text')) },
+    { title: 'Share handoff notes', done: sent,
+      body: 'Generate a no-secrets summary of this machine\u2019s verified state and send it to a paired machine, so its owner can fill in their side.',
+      action: h('div', { className: 'row', style: { marginTop: 8 } },
+        h('button', { className: 'primary', disabled: disabled || generating || !peers.length, onClick: async () => {
+          setGenerating(true)
+          try { const r = await api.post(`${BASE}/wizard-notes`, {}); setNotesText(r.result.markdown); setSent(false) }
+          catch (e) { setNotesText('Could not generate notes: ' + e.message) }
+          finally { setGenerating(false) }
+        } }, generating ? 'Generating…' : 'Generate handoff notes'),
+        notesText && !sent && h('div', { className: 'row', style: { marginTop: 8 } },
+          ...peers.map(p => h('button', { key: p.fingerprint, disabled, onClick: () => act('send', { peer: p.fingerprint, text: notesText },
+            () => { setSent(true); return `Handoff notes delivered to ${p.name}.` }) }, `Send to ${p.name}`)))),
+      detail: notesText && h('textarea', { className: 'wiz-notes', readOnly: true, value: notesText, 'aria-label': 'Handoff notes preview' }) }
+  ]
+
+  const done = steps.filter(s => s.done).length
+  const firstTodo = steps.findIndex(s => !s.done)
+  const collapsed = open === null ? done === steps.length : !open
+
+  return h('div', { className: 'card', 'aria-label': 'RAC setup wizard' },
+    h('div', { className: 'row spread' },
+      h('h2', { style: { margin: 0 } }, 'Setup wizard'),
+      h('div', { className: 'row' },
+        h('span', { className: `chip ${done === steps.length ? 'ok' : ''}` }, `${done}/${steps.length} complete`),
+        h('button', { onClick: () => setOpen(!collapsed) }, collapsed ? 'Open' : 'Close'))),
+    h('div', { className: 'wiz-progress', 'aria-hidden': true }, h('div', { style: { width: `${(done / steps.length) * 100}%` } })),
+    collapsed && done < steps.length && h('p', { style: { margin: '8px 0 0' } },
+      `Next: ${steps[firstTodo]?.title}. Open the wizard to continue.`),
+    !collapsed && h('div', { className: 'wiz-steps' },
+      steps.map((s, i) => h('div', { key: i, className: 'wiz-step' },
+        h('div', { className: `wiz-dot ${s.done ? 'done' : i === firstTodo ? 'next' : ''}`, 'aria-hidden': true }, s.done ? '✓' : i + 1),
+        h('div', null,
+          h('div', { className: 'wiz-title' }, s.title, h('span', { className: `chip ${s.done ? 'ok' : i === firstTodo ? 'ts' : ''}` }, s.done ? 'Done' : i === firstTodo ? 'Next' : 'Waiting')),
+          h('div', { className: 'wiz-body' }, s.body),
+          s.action, s.detail)))))
 }

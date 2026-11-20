@@ -7,6 +7,7 @@ from aiohttp import web
 from codex_crew.apps.route_registry import AppRoute
 
 from . import bridge
+from . import wizard
 from .session_router import SessionRouter
 
 SMALL = 16 * 1024
@@ -104,11 +105,44 @@ def routes(ctx):
         except ValueError as exc:
             return web.json_response({'error': 'Invalid request: ' + str(exc)}, status=400)
 
+    async def wizard_check(request, context):
+        """Read-only host verification for the setup wizard. Owner session required."""
+        denied = await owner_gate(request, 'remote_access_crew.wizard_check')
+        if denied is not None:
+            return denied
+        try:
+            value = await asyncio.to_thread(wizard.checks)
+            return web.json_response({'result': value}, headers={'Cache-Control': 'no-store'})
+        except Exception as exc:  # noqa: BLE001 - report a type, never internals
+            return web.json_response({'error': 'Local checks unavailable: ' + type(exc).__name__}, status=503)
+
+    async def wizard_notes(request, context):
+        """Compose handoff notes from live state. Owner session required."""
+        denied = await owner_gate(request, 'remote_access_crew.wizard_notes')
+        if denied is not None:
+            return denied
+        try:
+            raw = await request.read()
+            if len(raw) > SMALL:
+                return web.json_response({'error': 'request too large'}, status=413)
+            body = json.loads(raw or b'{}')
+            if not isinstance(body, dict) or set(body) - {'status'}:
+                raise ValueError('expected {} or {"status": bridge status dict}')
+            text = await asyncio.to_thread(
+                wizard.notes, body.get('status'))
+            return web.json_response({'result': {'markdown': text}}, headers={'Cache-Control': 'no-store'})
+        except bridge.BridgeError as exc:
+            return web.json_response({'error': str(exc)}, status=502)
+        except (ValueError, KeyError, TypeError) as exc:
+            return web.json_response({'error': 'Invalid request: ' + str(exc)}, status=400)
+
     names = {'pair_code': 'pair-code', 'pair_cancel': 'pair-cancel', 'host_app_title': 'host-app-title',
              'access_decision': 'access-decision', 'request_access': 'request-access', 'session_router': 'session-router'}
     return [
         AppRoute('GET', '/rac/status', operation('status')),
         AppRoute('GET', '/rac/session-router', operation('session_router')),
+        AppRoute('GET', '/rac/wizard-check', wizard_check),
+        AppRoute('POST', '/rac/wizard-notes', wizard_notes),
         AppRoute('POST', '/rac/host-link', host_link),
     ] + [
         AppRoute('POST', '/rac/' + names.get(c, c), operation(c))
