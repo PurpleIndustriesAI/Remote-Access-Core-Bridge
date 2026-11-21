@@ -1,3 +1,9 @@
+> [!CAUTION]
+> **SINGLE CONTRIBUTOR ONLY.** Every commit must be authored by `PurpleIndustriesAI`
+> (`329276754+PurpleIndustriesAI@users.noreply.github.com`). No other accounts, no
+> `Co-Authored-By` / AI attribution lines. CI rejects violations. Read
+> [CONTRIBUTING.md](CONTRIBUTING.md) before your first commit.
+
 <p align="center"><img src="assets/remote-access-crew.png" width="96" alt="Remote Access Core (Bridge) logo"></p>
 
 # Remote Access Core (Bridge)

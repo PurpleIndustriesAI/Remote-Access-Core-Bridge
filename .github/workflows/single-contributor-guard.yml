@@ -1,0 +1,35 @@
+# SINGLE CONTRIBUTOR ONLY. See CONTRIBUTING.md. Do not disable.
+name: single-contributor-guard
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every new commit is PurpleIndustriesAI, with no co-author lines
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          OK_EMAIL="329276754+PurpleIndustriesAI@users.noreply.github.com"
+          if [ -n "${BASE:-}" ]; then RANGE="$BASE..$AFTER"
+          elif [ -n "${BEFORE:-}" ] && ! echo "$BEFORE" | grep -qE '^0+$' && git cat-file -e "$BEFORE" 2>/dev/null; then RANGE="$BEFORE..$AFTER"
+          elif git rev-parse -q --verify "origin/$DEFAULT" >/dev/null && [ "$(git rev-parse "origin/$DEFAULT")" != "$AFTER" ]; then RANGE="origin/$DEFAULT..$AFTER"
+          else RANGE="$AFTER"; fi
+          bad=0
+          for c in $(git rev-list $RANGE); do
+            ae=$(git log -1 --format=%ae "$c"); ce=$(git log -1 --format=%ce "$c")
+            if [ "$ae" != "$OK_EMAIL" ]; then echo "::error::$c author '$ae' is not PurpleIndustriesAI"; bad=1; fi
+            if [ "$ce" != "$OK_EMAIL" ] && [ "$ce" != "noreply@github.com" ]; then echo "::error::$c committer '$ce' is not PurpleIndustriesAI"; bad=1; fi
+            if git log -1 --format=%B "$c" | grep -qiE '^(co-authored-by:|.*generated with \[)'; then echo "::error::$c carries a co-author / AI attribution line"; bad=1; fi
+          done
+          [ "$bad" = 0 ] && echo "All commits in $RANGE are single-contributor PurpleIndustriesAI." || { echo "See CONTRIBUTING.md: single contributor only."; exit 1; }
