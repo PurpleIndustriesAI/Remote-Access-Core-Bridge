@@ -6,6 +6,14 @@ subjects they summarize.
 ## Unreleased (branch: feat/rac-linux-windows-branded-installers)
 
 ### Added
+* Client microphone on Linux hosts (0.7.1): the host plays a paired client's microphone
+  into a PipeWire loopback that apps record as "RAC Client Microphone" (`rac-client-mic`
+  user service, enabled by install-rac-linux.sh and started by the bridge on demand). A
+  Linux client streams its default PipeWire microphone. Raw 48 kHz mono over the existing
+  paired TLS stream; no new protocol. Verified with a 440 Hz tone recorded back from the
+  source at full level.
+* Setup wizard step "Client microphone" and a per-device Microphone switch in settings; the
+  host checks report whether the virtual microphone exists.
 * Visible GUI setup wizard on the Crew page: a step-by-step flow (bridge
   running, pair a device, approve clipboard and files, open crew-link and
   crew-sessions channels, read-only host verification, live link test,
