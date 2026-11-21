@@ -151,6 +151,25 @@ def check_firewall():
     return _result('firewall', 'LAN-only firewall', 'na', 'Not checkable on this platform.')
 
 
+def check_virtual_mic():
+    """The host's virtual microphone a client's mic plays into (RAC Bridge 0.7.1+)."""
+    if IS_LINUX:
+        rc, out = _run(['pactl', 'list', 'short', 'sources'], timeout=5)
+        if rc is None:
+            return _result('microphone', 'Client microphone', 'warn',
+                           f'Could not list audio sources: {out}', 'Install pipewire-pulse (pactl)')
+        if any(line.split('\t')[1:2] == ['rac_client_mic'] for line in out.splitlines()):
+            return _result('microphone', 'Client microphone', 'ok',
+                           '"RAC Client Microphone" is available to host apps (voice chat, dictation, Command Core).')
+        return _result('microphone', 'Client microphone', 'fail',
+                       'The "RAC Client Microphone" virtual input is missing',
+                       'Run: systemctl --user enable --now rac-client-mic')
+    if IS_WINDOWS:
+        return _result('microphone', 'Client microphone', 'na',
+                       'Windows hosts play the client mic into Steam Streaming Microphone; see the README.')
+    return _result('microphone', 'Client microphone', 'na', 'Not checkable on this platform.')
+
+
 def _network_devices(lspci_out):
     """Parse `lspci -nnk` output for network controllers and their drivers.
 
@@ -209,7 +228,7 @@ def inventory():
 def checks():
     """All host checks for the wizard, safe to run in a worker thread."""
     return {'platform': sys.platform, 'checks': [
-        check_host_service(), check_uinput(), check_apps_json(), check_firewall()]}
+        check_host_service(), check_uinput(), check_apps_json(), check_firewall(), check_virtual_mic()]}
 
 
 def _notes_facts(status):

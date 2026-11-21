@@ -3,6 +3,9 @@ const React = modules.react
 const { createElement: h, useCallback, useEffect, useRef, useState } = React
 const { useAppApi } = modules['@codexcrew/app-sdk']
 const BASE = '/api/apps/remote-access-crew/rac'
+// Per-device capability switches in settings. microphone: the device may play its mic into this PC.
+const CAP_LABEL = { clipboard: 'Clipboard', files: 'Files', microphone: 'Microphone' }
+const CAP_TEXT = { clipboard: 'Clipboard (text and images)', files: 'Files', microphone: 'Microphone into this PC' }
 
 const css = `
 .rac{color:var(--text);background:var(--bg);padding:24px;min-height:100%;max-width:1200px;margin:auto;font:inherit}
@@ -188,11 +191,11 @@ export default function RemoteAccessCrew() {
         h('label', { className: 'switch' }, h('input', { type: 'checkbox', checked: !!p.autosync, disabled, onChange: e => act('set', { autosync: e.target.checked, peer: p.fingerprint }) }), 'Sync')),
       h('div', { className: 'row', style: { margin: '6px 0' } }, ...p.addrs.slice(0, 4).map(a => h('span', { key: a, className: `chip ${isTs(a) ? 'ts' : ''}` }, `${isTs(a) ? 'Tailscale' : 'LAN'} ${a}`))),
       h('div', { className: 'row', style: { margin: '6px 0' } },
-        ...['clipboard', 'files'].map(cap => h('label', { key: cap, className: 'switch' },
-          h('input', { type: 'checkbox', checked: !!p.permissions?.[cap], disabled, 'aria-label': `${cap === 'clipboard' ? 'Clipboard' : 'File'} access for ${p.name}`,
+        ...['clipboard', 'files', 'microphone'].map(cap => h('label', { key: cap, className: 'switch', title: cap === 'microphone' ? `${p.name} may play its microphone into this PC (RAC Client Microphone). On ${p.name} run: rac mic on ${data?.name || 'HOST'}` : undefined },
+          h('input', { type: 'checkbox', checked: !!p.permissions?.[cap], disabled, 'aria-label': `${CAP_LABEL[cap]} access for ${p.name}`,
             onChange: e => act('permissions', { peer: p.fingerprint, capability: cap, allowed: e.target.checked },
-              () => `${cap === 'clipboard' ? 'Clipboard (text and images)' : 'Files'} ${e.target.checked ? 'allowed' : 'blocked'} with ${p.name}.`) }),
-          cap === 'clipboard' ? 'Clipboard' : 'Files'))),
+              () => `${CAP_TEXT[cap]} ${e.target.checked ? 'allowed' : 'blocked'} with ${p.name}.`) }),
+          CAP_LABEL[cap]))),
       h('div', { className: 'row', style: { margin: '6px 0' } },
         h('label', { className: 'switch' },
           h('input', { type: 'checkbox', checked: !!p.permissions?.session_routing, disabled: disabled || data?.session_routing_supported !== true,
@@ -466,6 +469,9 @@ function Wizard({ api, act, data, bridge, disabled }) {
   const linkOn = channels.includes('crew-link')
   const sessionsOn = channels.includes('crew-sessions')
   const approvedPeer = peers.find(p => p.permissions?.clipboard && p.permissions?.files)
+  const micPeer = peers.find(p => p.permissions?.microphone)
+  // Unknown until the host checks run; a missing virtual mic shows as a failed check there.
+  const micReady = !checks?.checks || checks.checks.some(c => c.id === 'microphone' && (c.status === 'ok' || c.status === 'na'))
   const checksOk = !!checks && checks.checks.every(c => c.status === 'ok' || c.status === 'na')
   const checksRan = !!checks
 
@@ -488,6 +494,15 @@ function Wizard({ api, act, data, bridge, disabled }) {
           h('button', { key: p.fingerprint, disabled, onClick: () => act('request-access', { peer: p.fingerprint, capabilities: ['clipboard', 'files'] },
             () => `Local clipboard and file access approved for ${p.name}; its owner approves the same there.`) },
           `Allow and ask ${p.name}`))) },
+    { title: 'Client microphone', done: !!micPeer && micReady,
+      body: micPeer
+        ? `${micPeer.name} may play its microphone into this PC. On ${micPeer.name} run \u201crac mic on ${data?.name || 'this PC'}\u201d (\u201crac mic off\u201d stops it); host apps record it as \u201cRAC Client Microphone\u201d.${micReady ? '' : ' Run the host checks to confirm the virtual microphone exists.'}`
+        : 'Let a paired client stream its microphone into this PC so voice chat, dictation and Command Core hear you while you work remotely. Host apps record it as \u201cRAC Client Microphone\u201d.',
+      action: peers.length && h('div', { className: 'row', style: { marginTop: 8 } },
+        ...peers.filter(p => !p.permissions?.microphone).map(p =>
+          h('button', { key: p.fingerprint, disabled, onClick: () => act('permissions', { peer: p.fingerprint, capability: 'microphone', allowed: true },
+            () => `${p.name} may now play its microphone into this PC. On ${p.name} run: rac mic on ${data?.name || 'HOST'}`) },
+          `Allow microphone from ${p.name}`))) },
     { title: 'Open Crew channels', done: linkOn && sessionsOn,
       body: 'crew-link lets Crew Link reach this machine over the paired link; crew-sessions carries signed session routing.',
       action: h('div', { className: 'row', style: { marginTop: 8 } },
@@ -496,7 +511,7 @@ function Wizard({ api, act, data, bridge, disabled }) {
         h('button', { disabled, onClick: () => act('set', { channels: sessionsOn ? channels.filter(c => c !== 'crew-sessions') : [...new Set([...channels, 'crew-sessions'])] },
           () => sessionsOn ? 'Crew session channel closed.' : 'Crew session channel opened.') }, sessionsOn ? 'crew-sessions: on' : 'Turn on crew-sessions')) },
     { title: 'Verify the host', done: checksOk,
-      body: 'Read-only checks of the RAC Host service, /dev/uinput permissions, apps.json desktop entries, and the LAN-only firewall.',
+      body: 'Read-only checks of the RAC Host service, /dev/uinput permissions, apps.json desktop entries, the LAN-only firewall, and the client microphone input.',
       action: h('div', { className: 'row', style: { marginTop: 8 } },
         h('button', { disabled: disabled || checking, onClick: async () => {
           setChecking(true)

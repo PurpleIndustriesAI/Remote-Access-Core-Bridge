@@ -134,6 +134,26 @@ class ServiceAndFirewallTests(unittest.TestCase):
         self.assertTrue(long.endswith('…'))
 
 
+class VirtualMicTests(unittest.TestCase):
+    def test_present_on_linux_ok(self):
+        out = '56\talsa_input.pci-0000\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n1306\trac_client_mic\tPipeWire\tfloat32le 1ch 48000Hz\tSUSPENDED'
+        with patch.object(wizard, 'IS_LINUX', True), patch.object(wizard, '_run', return_value=(0, out)):
+            result = wizard.check_virtual_mic()
+        self.assertEqual(result['status'], 'ok')
+
+    def test_monitor_or_feed_alone_is_not_the_mic(self):
+        out = '1307\trac_client_mic_feed.monitor\tPipeWire\tfloat32le 1ch 48000Hz\tSUSPENDED'
+        with patch.object(wizard, 'IS_LINUX', True), patch.object(wizard, '_run', return_value=(0, out)):
+            result = wizard.check_virtual_mic()
+        self.assertEqual(result['status'], 'fail')
+        self.assertIn('rac-client-mic', result['fix'])
+
+    def test_pactl_unavailable_warns(self):
+        with patch.object(wizard, 'IS_LINUX', True), patch.object(wizard, '_run', return_value=(None, 'FileNotFoundError')):
+            result = wizard.check_virtual_mic()
+        self.assertEqual(result['status'], 'warn')
+
+
 class NotesTests(unittest.TestCase):
     STATUS = {
         'name': 'Violet', 'short_fingerprint': '7EBE-A112', 'version': '0.7.0',
@@ -167,13 +187,14 @@ class NotesTests(unittest.TestCase):
         self.assertIn('**FAIL** LAN-only firewall', text)
         self.assertIn('UFW inactive', text)
 
-    def test_checks_bundle_contains_all_four(self):
+    def test_checks_bundle_contains_all_five(self):
         with patch.object(wizard, 'check_host_service', return_value={'id': 'a'}), \
              patch.object(wizard, 'check_uinput', return_value={'id': 'b'}), \
              patch.object(wizard, 'check_apps_json', return_value={'id': 'c'}), \
-             patch.object(wizard, 'check_firewall', return_value={'id': 'd'}):
+             patch.object(wizard, 'check_firewall', return_value={'id': 'd'}), \
+             patch.object(wizard, 'check_virtual_mic', return_value={'id': 'e'}):
             bundle = wizard.checks()
-        self.assertEqual([c['id'] for c in bundle['checks']], ['a', 'b', 'c', 'd'])
+        self.assertEqual([c['id'] for c in bundle['checks']], ['a', 'b', 'c', 'd', 'e'])
         self.assertIn('platform', bundle)
 
 
