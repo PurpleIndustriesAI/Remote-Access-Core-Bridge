@@ -277,8 +277,34 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
+    # Client microphone: a PipeWire loopback presents the hidden rac_client_mic_feed sink as
+    # the "RAC Client Microphone" input. The bridge plays a paired client's mic into the feed
+    # (rac allow CLIENT microphone on; on the client: rac mic on HOST).
+    cat > "$HOME/.config/systemd/user/rac-client-mic.service" << 'EOF'
+[Unit]
+Description=Remote Access Core: virtual "RAC Client Microphone" (client mic feed for host apps)
+After=pipewire.service pipewire-pulse.service
+Requires=pipewire.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pw-loopback --channels=1 --channel-map=[MONO] \
+  --capture-props='media.class=Audio/Sink node.name=rac_client_mic_feed node.description="RAC Client Microphone (feed)" audio.position=[MONO] audio.rate=48000 node.passive=true' \
+  --playback-props='media.class=Audio/Source node.name=rac_client_mic node.description="RAC Client Microphone" audio.position=[MONO] audio.rate=48000'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=pipewire.service
+EOF
     systemctl --user daemon-reload 2>/dev/null || true
     systemctl --user enable --now rac-bridge.service 2>/dev/null || true
+    if command -v pw-loopback >/dev/null 2>&1; then
+        systemctl --user enable --now rac-client-mic.service 2>/dev/null || true
+    else
+        echo "  NOTE: pw-loopback missing (install pipewire); client microphone input not created"
+    fi
 else
     echo "  WARNING: RAC Bridge bundle missing in $SCRIPT_DIR"
 fi

@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "remote-access-crew"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "arboard",

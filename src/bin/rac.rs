@@ -19,7 +19,7 @@ USAGE:
   rac unpair PEER                 Forget a peer (it can no longer connect)
   rac allow PEER clipboard|files|device_inventory|microphone on|off
                                   Grant or revoke a paired device's access on this machine
-                                  (microphone: PEER may play into this PC's Steam Streaming Microphone)
+                                  (microphone: PEER may play into this PC's virtual microphone)
   rac request-access PEER [clipboard] [files] [device_inventory] [microphone]
                                   Ask PEER's owner for access (default: both); this machine
                                   allows the same exchange with PEER

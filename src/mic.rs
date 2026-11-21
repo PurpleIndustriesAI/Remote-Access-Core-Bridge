@@ -285,7 +285,134 @@ mod dev {
     }
 }
 
-#[cfg(not(windows))]
+/// The Linux host's virtual microphone. A `pw-loopback` (the `rac-client-mic` user service the
+/// RAC install enables) presents a hidden feed sink as an ordinary microphone source, so apps
+/// record "RAC Client Microphone" and the bridge plays the client's audio into the feed.
+#[cfg(target_os = "linux")]
+pub const LINUX_MIC_NODE: &str = "rac_client_mic";
+#[cfg(target_os = "linux")]
+pub const LINUX_MIC_FEED: &str = "rac_client_mic_feed";
+#[cfg(target_os = "linux")]
+pub const LINUX_MIC_DESCRIPTION: &str = "RAC Client Microphone";
+
+#[cfg(target_os = "linux")]
+mod dev {
+    //! PipeWire through its own tools (`pw-cat`, `pactl`, `systemctl --user`), which every
+    //! PipeWire desktop ships, so the bridge needs no audio library. Raw 48 kHz mono s16 in and
+    //! out, the wire format.
+    use super::{Jitter, LINUX_MIC_DESCRIPTION, LINUX_MIC_FEED, RATE};
+    use anyhow::{Context, Result, bail};
+    use std::io::{Read, Write};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+    use std::sync::{Arc, Mutex};
+
+    /// 20 ms at 48 kHz mono.
+    const FRAME: usize = (RATE / 50) as usize;
+
+    fn stopped_now(stopped: &Receiver<()>) -> bool {
+        !matches!(stopped.try_recv(), Err(TryRecvError::Empty))
+    }
+
+    fn feed_exists() -> bool {
+        Command::new("pactl").args(["list", "short", "sinks"]).output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.split('\t').nth(1) == Some(LINUX_MIC_FEED)))
+            .unwrap_or(false)
+    }
+
+    /// Make sure the virtual microphone exists, starting its user service if needed. Never
+    /// falls back to a real output: Sunshine streams those back to the client.
+    pub fn ensure_virtual_mic() -> Result<()> {
+        if feed_exists() {
+            return Ok(());
+        }
+        let _ = Command::new("systemctl").args(["--user", "start", "rac-client-mic.service"]).status();
+        for _ in 0..20 {
+            if feed_exists() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        bail!("the \"{LINUX_MIC_DESCRIPTION}\" virtual microphone is missing; enable it with \
+            'systemctl --user enable --now rac-client-mic' (the RAC Linux installer sets this up)")
+    }
+
+    fn spawn(args: &[&str], stdin: bool) -> Result<Child> {
+        Command::new("pw-cat").args(args)
+            .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
+            .stdout(if stdin { Stdio::null() } else { Stdio::piped() })
+            .stderr(Stdio::null())
+            .spawn().context("pw-cat is missing; install pipewire")
+    }
+
+    pub fn play(jitter: Arc<Mutex<Jitter>>, stopped: Receiver<()>, ready: Sender<Result<String>>) {
+        let open = || -> Result<Child> {
+            ensure_virtual_mic()?;
+            spawn(&["--playback", "--raw", "--target", LINUX_MIC_FEED, "--format", "s16", "--rate", &RATE.to_string(),
+                "--channels", "1", "--latency", "20ms", "-"], true)
+        };
+        let mut child = match open() {
+            Ok(c) => c,
+            Err(e) => { let _ = ready.send(Err(e)); return; }
+        };
+        let _ = ready.send(Ok(LINUX_MIC_DESCRIPTION.to_string()));
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        let mut buf = Vec::with_capacity(FRAME * 2);
+        // Pace by the clock, one 20 ms frame per 20 ms. Writing as fast as the pipe takes would
+        // queue most of a second of audio ahead of the device (voice arriving late) and pull the
+        // jitter buffer dry into silence. Two frames of silence first cover pw-cat's start.
+        let tick = std::time::Duration::from_millis(20);
+        let _ = stdin.write_all(&vec![0u8; FRAME * 4]);
+        let mut next = std::time::Instant::now();
+        while !stopped_now(&stopped) {
+            buf.clear();
+            {
+                let mut j = jitter.lock().unwrap();
+                for _ in 0..FRAME { buf.extend_from_slice(&j.pull().to_le_bytes()); }
+            }
+            if stdin.write_all(&buf).is_err() {
+                eprintln!("[rac] microphone playback stopped: pw-cat exited");
+                break;
+            }
+            next += tick;
+            let now = std::time::Instant::now();
+            if next > now {
+                std::thread::sleep(next - now);
+            } else if now - next > tick * 10 {
+                next = now; // fell far behind (suspend, stall): restart the clock, don't burst
+            }
+        }
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    pub fn capture(tx: tokio::sync::mpsc::Sender<Vec<i16>>, stopped: Receiver<()>, ready: Sender<Result<String>>) {
+        let mut child = match spawn(&["--record", "--raw", "--format", "s16", "--rate", &RATE.to_string(), "--channels", "1",
+            "--latency", "20ms", "-"], false) {
+            Ok(c) => c,
+            Err(e) => { let _ = ready.send(Err(e)); return; }
+        };
+        let _ = ready.send(Ok("default PipeWire microphone".to_string()));
+        let mut stdout = child.stdout.take().expect("piped stdout");
+        let mut bytes = vec![0u8; FRAME * 2];
+        while !stopped_now(&stopped) {
+            if stdout.read_exact(&mut bytes).is_err() {
+                eprintln!("[rac] microphone capture stopped: pw-cat exited");
+                break;
+            }
+            let frame: Vec<i16> = bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+            if tx.blocking_send(frame).is_err() {
+                break;
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod dev {
     use super::Jitter;
     use anyhow::{Result, anyhow};
@@ -293,11 +420,11 @@ mod dev {
     use std::sync::{Arc, Mutex};
 
     pub fn capture(_: tokio::sync::mpsc::Sender<Vec<i16>>, _: Receiver<()>, ready: Sender<Result<String>>) {
-        let _ = ready.send(Err(anyhow!("microphone sharing needs Windows")));
+        let _ = ready.send(Err(anyhow!("microphone sharing needs Windows or Linux")));
     }
 
     pub fn play(_: Arc<Mutex<Jitter>>, _: Receiver<()>, ready: Sender<Result<String>>) {
-        let _ = ready.send(Err(anyhow!("microphone sharing needs Windows")));
+        let _ = ready.send(Err(anyhow!("microphone sharing needs Windows or Linux")));
     }
 }
 
@@ -348,4 +475,31 @@ mod tests {
         a.write_all(&3u16.to_be_bytes()).await.unwrap();
         assert!(read_frame(&mut b).await.is_err(), "odd lengths are refused");
     }
+
+    /// Needs a PipeWire session with the rac-client-mic service: `cargo test -- --ignored`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn linux_player_reaches_the_virtual_microphone() {
+        use std::io::Read;
+        let mut rec = std::process::Command::new("pw-cat")
+            .args(["--record", "--raw", "--target", super::LINUX_MIC_NODE, "--format", "s16", "--rate", "48000", "--channels", "1", "-"])
+            .stdout(std::process::Stdio::piped()).spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let player = Player::open().unwrap();
+        assert_eq!(player.device, super::LINUX_MIC_DESCRIPTION);
+        for n in 0..100 {
+            let frame: Vec<i16> = (0..960).map(|i| ((((n * 960 + i) as f32) * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 12_000.0) as i16).collect();
+            player.jitter.lock().unwrap().push(&frame);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        drop(player);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = rec.kill();
+        let mut out = Vec::new();
+        rec.stdout.take().unwrap().read_to_end(&mut out).unwrap();
+        let peak = out.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap_or(0);
+        assert!(peak > 6_000, "recorded peak {peak}: the tone did not reach the virtual microphone");
+    }
+
 }

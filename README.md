@@ -72,7 +72,7 @@ rac allow PEER clipboard|files on|off      grant or revoke one device's access
 rac request-access PEER [clipboard] [files] ask PEER's owner for access
 rac approve PEER | rac deny PEER            answer a pending request
 rac access-requests on|off                  let paired devices ask this machine
-rac mic on PEER [tone] / rac mic off        stream this PC's microphone to PEER (Windows)
+rac mic on PEER [tone] / rac mic off        stream this PC's microphone to PEER (Windows, Linux)
 ```
 
 ## Access
@@ -102,6 +102,17 @@ because that driver copies bytes without converting and voice would come out slo
 Set **Speakers (Steam Streaming Microphone) > Properties > Advanced > Default Format** to the
 format of the microphone side (usually 1 channel, 32 bit, 44100 Hz), and keep the microphone
 side's level at 0 dB. It never falls back to the default speakers, which the RAC Host streams back.
+
+### Linux hosts (0.7.1)
+
+On Linux the host plays the client's microphone into a PipeWire loopback that apps see as
+**RAC Client Microphone** (node `rac_client_mic`). The `rac-client-mic` user service creates it
+(the RAC Linux installer enables it; by hand: `systemctl --user enable --now rac-client-mic`),
+and the bridge starts it on demand if it is missing. Pick **RAC Client Microphone** as the input
+in the app, or make it the default with `pactl set-default-source rac_client_mic`. A Linux client
+captures its default PipeWire microphone with `pw-cat`. The Crew page's setup wizard has a
+**Client microphone** step and each device in settings has a **Microphone** switch.
+
 
 ## Network helper
 
