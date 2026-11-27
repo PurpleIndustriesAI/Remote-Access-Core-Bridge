@@ -57,7 +57,7 @@ commands if a firewall is active. Clipboard support: X11, KDE Plasma and wlroots
 2. On machine B: **Enter a code** with A's LAN or Tailscale address, or
    `rac pair 192.168.1.20 ABCD-EFGH-JKLM-NPQR`.
 
-The code is 80 random bits, valid for 5 minutes, single use, and locked after 5 wrong tries.
+The code is 80 random bits, valid for 15 minutes, single use, and locked after 5 wrong tries.
 
 ## Commands
 
