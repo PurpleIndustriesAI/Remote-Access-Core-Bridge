@@ -19,7 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-const PAIR_WINDOW: Duration = Duration::from_secs(300);
+const PAIR_WINDOW: Duration = Duration::from_secs(15 * 60);
 const PAIR_ATTEMPTS: u32 = 5;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
